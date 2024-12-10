@@ -3871,7 +3871,7 @@ createApp({
               'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-              textUpload: allowTextUpload.value,
+              textUpload: allowFileUpload.value,
               fileUpload: newStatus
             })
           });
