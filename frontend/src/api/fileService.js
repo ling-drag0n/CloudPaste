@@ -476,83 +476,80 @@ export async function uploadToWebDAV(file, options, onProgress) {
     console.log("WebDAV预签名数据:", presignedData.data);
     
     // 获取预签名数据中的信息
-    const { file_id, storage_path, upload } = presignedData.data;
+    const { file_id, storage_path } = presignedData.data;
     
-    // 创建表单数据 - 确保字段名称与后端预期一致
+    // 创建表单数据
     const formData = new FormData();
     formData.append("file", file);
     formData.append("s3_config_id", options.s3_config_id);
     formData.append("storagePath", storage_path);
-    
+
     // 添加文件额外信息
     if (options.remark) formData.append("remark", options.remark);
     if (options.password) formData.append("password", options.password);
     if (options.expires_in) formData.append("expires_in", options.expires_in);
     if (options.max_views !== undefined) formData.append("max_views", options.max_views);
-    
-    // 使用POST请求通过Worker代理上传到WebDAV
-    return await new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
+
+    // 使用POST请求通过Worker代理上传到WebDAV - 尝试使用fetch API代替XMLHttpRequest
+    return new Promise((resolve, reject) => {
+      // 使用完整API URL
+      const apiUrl = getFullApiUrl("s3/webdav-upload");
+      console.log("使用fetch API发送WebDAV上传请求到:", apiUrl);
       
-      // 设置进度监听
-      xhr.upload.addEventListener("progress", (event) => {
-        if (event.lengthComputable && typeof onProgress === "function") {
-          const progress = Math.round((event.loaded / event.total) * 100);
-          onProgress(progress, event.loaded, event.total);
-        }
-      });
-      
-      xhr.addEventListener("load", () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          try {
-            const response = JSON.parse(xhr.responseText);
-            
-            // 如果上传成功，但后端没有返回文件ID，则从预签名数据中获取
-            if (response.success && response.data && !response.data.id && file_id) {
-              response.data.id = file_id;
-            }
-            
-            resolve(response);
-          } catch (error) {
-            reject(new Error("解析上传响应失败"));
-          }
-        } else {
-          console.error("WebDAV上传失败:", xhr.status, xhr.statusText, xhr.responseText);
-          reject(new Error(`WebDAV上传失败: ${xhr.status} ${xhr.statusText}`));
-        }
-      });
-      
-      xhr.addEventListener("error", (event) => {
-        console.error("WebDAV上传网络错误:", event);
-        reject(new Error("WebDAV上传过程中发生网络错误"));
-      });
-      
-      xhr.addEventListener("abort", () => {
-        reject(new Error("WebDAV上传被取消"));
-      });
-      
-      // 使用API基础路径 - 使用getFullApiUrl构建完整URL
-      const apiPath = "s3/webdav-upload";
-      const apiUrl = getFullApiUrl(apiPath);
-      console.log("WebDAV上传请求:", apiUrl, "参数:", Object.fromEntries(formData.entries()));
-      
-      // 设置请求
-      xhr.open("POST", apiUrl, true);
-      xhr.withCredentials = true;  // 确保发送凭证
-      
-      // 从localStorage获取认证令牌并添加到请求头
+      // 获取认证信息
       const adminToken = localStorage.getItem("admin_token");
       const apiKey = localStorage.getItem("api_key");
       
+      // 构建请求头
+      const headers = {};
       if (adminToken) {
-        xhr.setRequestHeader("Authorization", `Bearer ${adminToken}`);
+        headers["Authorization"] = `Bearer ${adminToken}`;
       } else if (apiKey) {
-        xhr.setRequestHeader("Authorization", `ApiKey ${apiKey}`);
+        headers["Authorization"] = `ApiKey ${apiKey}`;
       }
       
-      xhr.send(formData);
+      // 使用fetch API发送请求
+      fetch(apiUrl, {
+        method: "POST",
+        body: formData,
+        credentials: "include",
+        headers,
+      })
+      .then(response => {
+        if (!response.ok) {
+          const errorMessage = `WebDAV上传失败: ${response.status} ${response.statusText}`;
+          console.error(errorMessage);
+          return response.text().then(text => {
+            throw new Error(`${errorMessage}\n响应内容: ${text}`);
+          });
+        }
+        return response.json();
+      })
+      .then(data => {
+        // 如果上传成功，但后端没有返回文件ID，则从预签名数据中获取
+        if (data.success && data.data && !data.data.id && file_id) {
+          data.data.id = file_id;
+        }
+        resolve(data);
+      })
+      .catch(error => {
+        console.error("WebDAV上传失败:", error);
+        reject(error);
+      });
+      
+      // 模拟进度更新 - fetch API不支持进度事件
+      if (typeof onProgress === "function") {
+        let totalProgress = 0;
+        const interval = setInterval(() => {
+          totalProgress += Math.floor(Math.random() * 10) + 1;
+          if (totalProgress >= 100) {
+            totalProgress = 100;
+            clearInterval(interval);
+          }
+          onProgress(totalProgress, 0, 0);
+        }, 300);
+      }
     });
-    
   } catch (error) {
     console.error("WebDAV上传文件失败:", error);
     throw error;
