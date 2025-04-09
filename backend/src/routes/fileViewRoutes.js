@@ -1,6 +1,7 @@
-import { DbTables } from "../constants";
+import { DbTables, S3ProviderTypes } from "../constants";
 import { verifyPassword } from "../utils/crypto";
 import { generatePresignedUrl, deleteFileFromS3 } from "../utils/s3Utils";
+import { downloadFileFromWebDAV, deleteFileFromWebDAV } from "../utils/webdavUtils";
 
 /**
  * 从数据库获取文件信息
@@ -86,10 +87,17 @@ async function checkAndDeleteExpiredFile(db, file, encryptionSecret) {
         const s3Config = await db.prepare(`SELECT * FROM ${DbTables.S3_CONFIGS} WHERE id = ?`).bind(file.s3_config_id).first();
         if (s3Config) {
           try {
-            await deleteFileFromS3(s3Config, file.storage_path, encryptionSecret);
+            // 根据不同的提供商类型使用不同的删除方法
+            if (s3Config.provider_type === S3ProviderTypes.WEBDAV) {
+              // WebDAV删除
+              await deleteFileFromWebDAV(s3Config, file.storage_path, encryptionSecret);
+            } else {
+              // S3删除
+              await deleteFileFromS3(s3Config, file.storage_path, encryptionSecret);
+            }
           } catch (error) {
-            console.error("从S3删除过期文件失败:", error);
-            // 即使S3删除失败，仍继续数据库删除
+            console.error("从存储中删除过期文件失败:", error);
+            // 即使存储删除失败，仍继续数据库删除
           }
         }
       }
@@ -198,76 +206,63 @@ async function handleFileDownload(slug, env, request, forceDownload = false) {
       return new Response("文件不可访问", { status: 403 });
     }
 
-    // 文件预览和下载端点默认不增加访问计数
+    // 获取S3存储配置
+    const s3Config = await db.prepare(`SELECT * FROM ${DbTables.S3_CONFIGS} WHERE id = ?`).bind(file.s3_config_id).first();
+    if (!s3Config) {
+      return new Response("文件存储配置不存在", { status: 500 });
+    }
 
-    let result = { isExpired: false, file };
-
-    // 如果文件已到达最大访问次数限制
-    if (result.isExpired) {
-      // 这里已经在incrementAndCheckFileViews函数中尝试删除了文件，但为确保删除成功，再次检查文件是否还存在
-      console.log(`文件(${file.id})已达到最大查看次数，准备删除...`);
-      try {
-        // 再次检查文件是否被成功删除，如果没有则再次尝试删除
-        const fileStillExists = await db.prepare(`SELECT id FROM ${DbTables.FILES} WHERE id = ?`).bind(file.id).first();
-        if (fileStillExists) {
-          console.log(`文件(${file.id})仍然存在，再次尝试删除...`);
-          await checkAndDeleteExpiredFile(db, result.file, encryptionSecret);
-        }
-      } catch (error) {
-        console.error(`尝试再次删除文件(${file.id})时出错:`, error);
-      }
+    // 增加查看计数并检查是否超过限制
+    const viewResult = await incrementAndCheckFileViews(db, file, encryptionSecret);
+    if (viewResult.isExpired) {
       return new Response("文件已达到最大查看次数", { status: 410 });
     }
 
-    // 如果没有S3配置或存储路径，则返回404
-    if (!result.file.s3_config_id || !result.file.storage_path) {
-      return new Response("文件存储信息不完整", { status: 404 });
-    }
-
-    // 获取S3配置
-    const s3Config = await db.prepare(`SELECT * FROM ${DbTables.S3_CONFIGS} WHERE id = ?`).bind(result.file.s3_config_id).first();
-    if (!s3Config) {
-      return new Response("无法获取存储配置信息", { status: 500 });
-    }
-
-    try {
-      // 生成预签名URL，有效期1小时
-      const presignedUrl = await generatePresignedUrl(s3Config, result.file.storage_path, encryptionSecret, 3600, forceDownload);
-
-      // 准备文件名和内容类型
-      const filename = result.file.filename;
-      const contentType = result.file.mimetype || "application/octet-stream";
-
-      // 代理请求到实际的文件URL
-      const fileRequest = new Request(presignedUrl);
-      const response = await fetch(fileRequest);
-
-      // 创建一个新的响应，包含正确的文件名和Content-Type
-      const headers = new Headers(response.headers);
-
-      // 根据是否强制下载设置Content-Disposition
-      if (forceDownload) {
-        headers.set("Content-Disposition", `attachment; filename="${encodeURIComponent(filename)}"`);
-      } else {
-        // 对于预览，我们不设置Content-Disposition或设置为inline
-        headers.set("Content-Disposition", `inline; filename="${encodeURIComponent(filename)}"`);
+    // 根据不同的存储提供商类型处理下载
+    if (s3Config.provider_type === S3ProviderTypes.WEBDAV) {
+      // WebDAV下载
+      try {
+        // 从WebDAV获取文件内容
+        const { data, stats } = await downloadFileFromWebDAV(s3Config, file.storage_path, encryptionSecret);
+        
+        // 准备响应头
+        const headers = {
+          "Content-Type": file.mimetype || "application/octet-stream",
+          "Content-Length": stats.size.toString(),
+        };
+        
+        // 根据是否强制下载设置Content-Disposition
+        if (forceDownload) {
+          headers["Content-Disposition"] = `attachment; filename="${encodeURIComponent(file.filename)}"`;
+        } else {
+          headers["Content-Disposition"] = `inline; filename="${encodeURIComponent(file.filename)}"`;
+        }
+        
+        // 返回文件内容
+        return new Response(data, {
+          status: 200,
+          headers: headers,
+        });
+      } catch (error) {
+        console.error("WebDAV下载错误:", error);
+        return new Response(`从WebDAV下载文件失败: ${error.message}`, { status: 500 });
       }
-
-      // 确保设置正确的内容类型
-      headers.set("Content-Type", contentType);
-
-      // 返回响应
-      return new Response(response.body, {
-        status: response.status,
-        headers: headers,
-      });
-    } catch (error) {
-      console.error("代理文件下载出错:", error);
-      return new Response("获取文件失败: " + error.message, { status: 500 });
+    } else {
+      // S3下载
+      try {
+        // 生成预签名URL用于直接下载
+        const presignedUrl = await generatePresignedUrl(s3Config, file.storage_path, encryptionSecret, 3600, forceDownload);
+        
+        // 直接重定向到预签名URL
+        return Response.redirect(presignedUrl, 302);
+      } catch (error) {
+        console.error("生成S3预签名URL错误:", error);
+        return new Response(`生成S3下载URL失败: ${error.message}`, { status: 500 });
+      }
     }
   } catch (error) {
-    console.error("处理文件下载错误:", error);
-    return new Response("服务器处理错误: " + error.message, { status: 500 });
+    console.error("文件下载处理错误:", error);
+    return new Response(`处理文件下载时出错: ${error.message}`, { status: 500 });
   }
 }
 

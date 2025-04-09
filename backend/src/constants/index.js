@@ -37,4 +37,5 @@ export const S3ProviderTypes = {
   B2: "Backblaze B2",
   AWS: "AWS S3",
   OTHER: "Other S3 Compatible",
+  WEBDAV: "WebDAV Storage",
 };

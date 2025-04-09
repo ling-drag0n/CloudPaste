@@ -6,6 +6,7 @@ import { HTTPException } from "hono/http-exception";
 import { createErrorResponse, getLocalTimeString, generateS3ConfigId, formatFileSize } from "../utils/common";
 import { encryptValue, decryptValue } from "../utils/crypto";
 import { createS3Client } from "../utils/s3Utils";
+import { testWebDAVConnection } from "../utils/webdavUtils";
 import { S3Client, ListObjectsV2Command, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
@@ -122,7 +123,16 @@ export async function getPublicS3ConfigById(db, id) {
  */
 export async function createS3Config(db, configData, adminId, encryptionSecret) {
   // 验证必填字段
-  const requiredFields = ["name", "provider_type", "endpoint_url", "bucket_name", "access_key_id", "secret_access_key"];
+  const requiredFields = ["name", "provider_type", "endpoint_url"];
+  
+  // WebDAV不需要bucket_name，而S3需要
+  if (configData.provider_type !== S3ProviderTypes.WEBDAV) {
+    requiredFields.push("bucket_name");
+  }
+  
+  // 所有提供商都需要认证信息
+  requiredFields.push("access_key_id", "secret_access_key");
+  
   for (const field of requiredFields) {
     if (!configData[field]) {
       throw new HTTPException(ApiStatus.BAD_REQUEST, { message: `缺少必填字段: ${field}` });
@@ -141,6 +151,9 @@ export async function createS3Config(db, configData, adminId, encryptionSecret) 
   const pathStyle = configData.path_style === true ? 1 : 0;
   const defaultFolder = configData.default_folder || "";
   const isPublic = configData.is_public === true ? 1 : 0;
+  
+  // 对于WebDAV，bucket_name用作基础目录路径
+  const bucketName = configData.bucket_name || (configData.provider_type === S3ProviderTypes.WEBDAV ? "" : ""); 
 
   // 处理存储总容量
   let totalStorageBytes = null;
@@ -158,6 +171,8 @@ export async function createS3Config(db, configData, adminId, encryptionSecret) 
       totalStorageBytes = 10 * 1024 * 1024 * 1024; // 10GB默认值
     } else if (configData.provider_type === S3ProviderTypes.B2) {
       totalStorageBytes = 10 * 1024 * 1024 * 1024; // 10GB默认值
+    } else if (configData.provider_type === S3ProviderTypes.WEBDAV) {
+      totalStorageBytes = 10 * 1024 * 1024 * 1024; // WebDAV默认10GB
     } else {
       totalStorageBytes = 5 * 1024 * 1024 * 1024; // 5GB默认值
     }
@@ -184,7 +199,7 @@ export async function createS3Config(db, configData, adminId, encryptionSecret) 
           configData.name,
           configData.provider_type,
           configData.endpoint_url,
-          configData.bucket_name,
+          bucketName,
           region,
           encryptedAccessKey,
           encryptedSecretKey,
@@ -202,12 +217,15 @@ export async function createS3Config(db, configData, adminId, encryptionSecret) 
     name: configData.name,
     provider_type: configData.provider_type,
     endpoint_url: configData.endpoint_url,
-    bucket_name: configData.bucket_name,
+    bucket_name: bucketName,
     region,
-    path_style: pathStyle === 1,
+    path_style: !!pathStyle,
     default_folder: defaultFolder,
-    is_public: isPublic === 1,
+    is_public: !!isPublic,
+    is_default: false,
     total_storage_bytes: totalStorageBytes,
+    created_at: getLocalTimeString(),
+    updated_at: getLocalTimeString(),
   };
 }
 
@@ -418,454 +436,220 @@ export async function setDefaultS3Config(db, id, adminId) {
  * @param {string} id - 配置ID
  * @param {string} adminId - 管理员ID
  * @param {string} encryptionSecret - 加密密钥
- * @param {string} requestOrigin - 请求来源
+ * @param {string} requestOrigin - 请求来源（用于CORS验证）
  * @returns {Promise<Object>} 测试结果
  */
 export async function testS3Connection(db, id, adminId, encryptionSecret, requestOrigin) {
-  // 获取S3配置
+  // 查询配置
   const config = await db
-      .prepare(
-          `
-      SELECT * FROM ${DbTables.S3_CONFIGS}
+    .prepare(
+      `
+      SELECT 
+        id, name, provider_type, endpoint_url, bucket_name, 
+        region, access_key_id, secret_access_key, path_style, 
+        default_folder, is_public, is_default, admin_id
+      FROM ${DbTables.S3_CONFIGS}
       WHERE id = ? AND admin_id = ?
     `
-      )
-      .bind(id, adminId)
-      .first();
+    )
+    .bind(id, adminId)
+    .first();
 
   if (!config) {
     throw new HTTPException(ApiStatus.NOT_FOUND, { message: "S3配置不存在" });
   }
 
-  // 创建S3客户端测试连接
-  const s3Client = await createS3Client(config, encryptionSecret);
-
-  // 测试结果对象
-  const testResult = {
-    read: { success: false, error: null, note: "后端直接测试，不代表前端访问" },
-    write: { success: false, error: null, note: "后端直接测试，不代表前端上传" },
-    cors: { success: false, error: null, note: "仅测试CORS预检请求配置，是跨域支持的基础" },
-    connectionInfo: {
-      bucket: config.bucket_name,
-      endpoint: config.endpoint_url || "默认",
-      region: config.region || "默认",
-      pathStyle: config.path_style ? "是" : "否",
-      provider: config.provider_type,
-      directory: config.directory || "",
-    },
-  };
-
-  // 测试阶段1: 读取权限测试
-  try {
-    const command = new ListObjectsV2Command({
-      Bucket: config.bucket_name,
-      MaxKeys: 10,
-      Prefix: config.directory ? `${config.directory}/` : "",
-    });
-
-    // 发送标准命令对象
-    const response = await s3Client.send(command);
-    testResult.read.success = true;
-    testResult.read.objectCount = response.Contents?.length || 0;
-    testResult.read.prefix = config.directory ? `${config.directory}/` : "(根目录)";
-    testResult.read.note = "此测试通过后端SDK直接访问S3，成功不代表前端可访问";
-
-    // 更详细的信息
-    if (response.Contents && response.Contents.length > 0) {
-      testResult.read.firstObjects = response.Contents.slice(0, 3).map((obj) => ({
-        key: obj.Key,
-        size: formatFileSize(obj.Size),
-        lastModified: new Date(obj.LastModified).toISOString(),
-      }));
+  // 如果是WebDAV存储，使用WebDAV测试方法
+  if (config.provider_type === S3ProviderTypes.WEBDAV) {
+    try {
+      const result = await testWebDAVConnection(config, encryptionSecret);
+      return result;
+    } catch (error) {
+      console.error("WebDAV连接测试失败:", error);
+      return {
+        success: false,
+        message: "WebDAV连接测试失败: " + error.message,
+        error: error.message || "未知错误",
+        config: {
+          name: config.name,
+          provider_type: config.provider_type,
+          endpoint_url: config.endpoint_url,
+          bucket_name: config.bucket_name,
+        },
+      };
     }
-  } catch (error) {
-    testResult.read.success = false;
-    testResult.read.error = error.message;
-    testResult.read.code = error.Code || error.code;
   }
 
-  // 测试阶段2: 写入权限测试 (仅创建一个小测试文件)
+  // 解密存储密钥
+  const accessKeyId = await decryptValue(config.access_key_id, encryptionSecret);
+  const secretAccessKey = await decryptValue(config.secret_access_key, encryptionSecret);
+
+  // 创建S3客户端
   try {
-    const timestamp = Date.now();
-    const testKey = `${config.directory ? config.directory + "/" : ""}__test_${timestamp}.txt`;
+    // 创建S3客户端
+    const s3Client = await createS3Client(config, encryptionSecret);
 
-    // 创建测试文件内容
-    const testContent = "CloudPaste S3连接测试文件";
-
-    // 针对不同的存储提供商采用不同的上传策略
-    if (config.provider_type === S3ProviderTypes.B2) {
-      // B2特殊处理 - 由于头部兼容性问题，改为标记为只读测试成功
-      console.log("B2存储服务跳过直接写入测试，仅测试读取权限");
-
-      // 将B2标记为测试成功，但添加说明
-      testResult.write.success = true;
-      testResult.write.uploadTime = 0;
-      testResult.write.testFile = "(B2存储服务不进行测试写入)";
-      testResult.write.note = "由于B2 S3兼容层的特性，跳过测试写入。实际上传功能正常工作。";
-    } else {
-      // 其他S3服务使用标准AWS SDK
-      const putCommand = new PutObjectCommand({
+    // 准备测试的文件名
+    const testKey = `${config.default_folder || ""}cloudpaste-test-${Date.now()}.txt`;
+    
+    // 测试上传文件
+    const putParams = {
+      Bucket: config.bucket_name,
+      Key: testKey,
+      Body: "CloudPaste S3 connection test.",
+      ContentType: "text/plain",
+    };
+    
+    // 根据不同服务商可能需要特殊处理
+    let uploadResult;
+    try {
+      // 尝试上传
+      uploadResult = await s3Client.send(new PutObjectCommand(putParams));
+      
+      // 如果没有抛出错误，说明上传成功
+      console.log(`测试上传成功: ${testKey}, ETag: ${uploadResult.ETag}`);
+    } catch (uploadError) {
+      console.error("测试上传失败:", uploadError);
+      return {
+        success: false,
+        message: "上传测试失败: " + uploadError.message,
+        error: uploadError.message,
+        config: {
+          name: config.name,
+          provider_type: config.provider_type,
+          endpoint_url: config.endpoint_url,
+          bucket_name: config.bucket_name,
+        },
+      };
+    }
+    
+    // 测试列出文件
+    let listResult;
+    try {
+      // 列出存储桶内容
+      const listParams = {
+        Bucket: config.bucket_name,
+        Prefix: config.default_folder || "",
+        MaxKeys: 10,
+      };
+      
+      listResult = await s3Client.send(new ListObjectsV2Command(listParams));
+      console.log(`列出桶内容成功，找到${listResult.Contents?.length || 0}个对象`);
+    } catch (listError) {
+      console.error("列出桶内容失败:", listError);
+      return {
+        success: false,
+        message: "列出桶内容失败: " + listError.message,
+        error: listError.message,
+        config: {
+          name: config.name,
+          provider_type: config.provider_type,
+          endpoint_url: config.endpoint_url,
+          bucket_name: config.bucket_name,
+        },
+      };
+    }
+    
+    // 测试生成预签名URL
+    let presignedResult = null;
+    try {
+      const getCommand = new GetObjectCommand({
         Bucket: config.bucket_name,
         Key: testKey,
-        Body: testContent,
-        ContentType: "text/plain",
-        Metadata: {
-          "test-purpose": "cloudpaste-s3-test",
-          "test-timestamp": `${timestamp}`,
-        },
       });
-
-      // 尝试上传一个测试文件
-      const uploadStartTime = performance.now();
-      const putResponse = await s3Client.send(putCommand);
-      const uploadEndTime = performance.now();
-
-      testResult.write.success = true;
-      testResult.write.uploadTime = Math.round(uploadEndTime - uploadStartTime);
-      testResult.write.testFile = testKey;
-      testResult.write.note = "此测试通过后端SDK直接上传，成功不代表前端可上传";
-
-      // 上传成功后尝试删除测试文件 (但不影响测试结果)
+      
+      const url = await getSignedUrl(s3Client, getCommand, { expiresIn: 3600 });
+      console.log("生成预签名URL成功:", url.substring(0, 100) + "...");
+      presignedResult = { url: url.substring(0, 100) + "..." };
+    } catch (presignedError) {
+      console.error("生成预签名URL失败:", presignedError);
+      presignedResult = { error: presignedError.message };
+    }
+    
+    // 测试CORS（如果提供了请求源）
+    let corsResult = null;
+    if (requestOrigin) {
       try {
-        const deleteCommand = new DeleteObjectCommand({
-          Bucket: config.bucket_name,
-          Key: testKey,
+        // 构造CORS测试的URL
+        const corsTestUrl = new URL(presignedResult.url || "");
+        const headers = new Headers();
+        headers.append("Origin", requestOrigin);
+        
+        // 发送OPTIONS请求测试CORS
+        const corsResponse = await fetch(corsTestUrl.toString(), {
+          method: "OPTIONS",
+          headers,
         });
-        await s3Client.send(deleteCommand);
-        testResult.write.cleaned = true;
-      } catch (cleanupError) {
-        testResult.write.cleaned = false;
-        testResult.write.cleanupError = cleanupError.message;
-      }
-    }
-  } catch (error) {
-    testResult.write.success = false;
-    testResult.write.error = error.message;
-    testResult.write.code = error.Code || error.code;
-  }
-
-  // 测试阶段3: 跨域CORS配置测试
-  try {
-    const timestamp = Date.now();
-    const testKey = `${config.directory ? config.directory + "/" : ""}__cors_test_${timestamp}.txt`;
-    const testContent = "CloudPaste CORS测试文件";
-
-    // 生成预签名URL用于跨域测试
-    const putCommand = new PutObjectCommand({
-      Bucket: config.bucket_name,
-      Key: testKey,
-      ContentType: "text/plain",
-    });
-
-    // 获取预签名URL
-    const presignedUrl = await getSignedUrl(s3Client, putCommand, { expiresIn: 300 });
-
-    try {
-      // 根据不同服务商定制CORS测试请求头
-      const corsRequestHeaders = {
-        Origin: requestOrigin,
-        "Access-Control-Request-Method": "PUT",
-        "Access-Control-Request-Headers": "content-type,x-amz-content-sha256,x-amz-date,authorization",
-      };
-
-      // 为特定服务商添加额外的CORS请求头
-      switch (config.provider_type) {
-        case S3ProviderTypes.B2:
-          // B2可能需要额外的请求头
-          corsRequestHeaders["Access-Control-Request-Headers"] += ",x-bz-content-sha1,x-requested-with";
-          break;
-      }
-
-      // 创建fetch请求测试服务端预检响应
-      const optionsResponse = await fetch(presignedUrl, {
-        method: "OPTIONS",
-        headers: corsRequestHeaders,
-      });
-
-      // 检查预检响应头
-      const allowOrigin = optionsResponse.headers.get("access-control-allow-origin");
-      const allowMethods = optionsResponse.headers.get("access-control-allow-methods");
-      const allowHeaders = optionsResponse.headers.get("access-control-allow-headers");
-
-      if (allowOrigin) {
-        testResult.cors.success = true;
-        testResult.cors.allowOrigin = allowOrigin;
-        testResult.cors.allowMethods = allowMethods;
-        testResult.cors.allowHeaders = allowHeaders;
-        testResult.cors.note = "此测试仅检查CORS预检请求配置是否正确，是判断S3服务是否支持跨域请求的基础";
-
-        // 添加CORS配置说明
-        testResult.cors.detail = "预检请求测试通过，S3服务的CORS基础配置正确。";
-
-        // 为特定服务商添加额外CORS说明
-        switch (config.provider_type) {
-          case S3ProviderTypes.B2:
-            testResult.cors.providerNote = "对于B2，除了基本CORS配置外，还需要确保已允许X-Bz-Content-Sha1和X-Requested-With头部。";
-            break;
-
-          case S3ProviderTypes.R2:
-            testResult.cors.providerNote = "Cloudflare R2的CORS配置相对简单，通常在控制台中设置后即可正常工作。";
-            break;
-        }
-      } else {
-        testResult.cors.success = false;
-        testResult.cors.error = "预检请求未返回Access-Control-Allow-Origin头，可能没有正确配置CORS";
-        testResult.cors.statusCode = optionsResponse.status;
-
-        // 添加更多预检错误诊断信息
-        testResult.cors.optionsResponseHeaders = {};
-        for (const [key, value] of optionsResponse.headers.entries()) {
-          testResult.cors.optionsResponseHeaders[key] = value;
-        }
-
-        // 添加特定服务商的CORS配置指南
-        switch (config.provider_type) {
-          case S3ProviderTypes.B2:
-            testResult.cors.configGuide = "对于B2，需要在存储桶设置中配置CORS。确保允许来源包含您的域名或*，方法包含PUT，以及所有必要的头部。";
-            break;
-
-          case S3ProviderTypes.R2:
-            testResult.cors.configGuide = "在Cloudflare R2控制台的存储桶设置中启用CORS，添加适当的来源和方法。";
-            break;
-
-          case S3ProviderTypes.AWS:
-            testResult.cors.configGuide = "在AWS S3控制台的存储桶属性中配置CORS设置，添加适当的跨域规则。";
-            break;
-
-          default:
-            testResult.cors.configGuide = "请检查您的S3兼容服务提供商的CORS配置说明，确保允许来自您前端域名的请求。";
-        }
-      }
-    } catch (corsError) {
-      testResult.cors.success = false;
-      testResult.cors.error = corsError.message;
-    }
-  } catch (presignError) {
-    testResult.cors.success = false;
-    testResult.cors.error = "无法生成预签名URL: " + presignError.message;
-  }
-
-  // 测试阶段4: 完整前端上传流程模拟
-  testResult.frontendSim = {
-    success: false,
-    note: "此测试完整模拟前端上传流程，包含预签名URL获取、XHR上传和元数据提交",
-  };
-
-  try {
-    const timestamp = Date.now();
-    const testFilename = `frontend_upload_test_${timestamp}.txt`;
-    const testPath = config.directory ? `${config.directory}/tests/` : "tests/";
-    const testKey = `${testPath}${testFilename}`;
-    const testContent = "CloudPaste前端上传模拟测试文件 - " + new Date().toISOString();
-    const testMimetype = "text/plain";
-    const testSize = testContent.length;
-
-    // 步骤1: 模拟前端获取预签名URL的请求
-    testResult.frontendSim.step1 = { name: "获取预签名URL", success: false };
-
-    // 为不同服务商准备合适的PutObject参数
-    const putCommandParams = {
-      Bucket: config.bucket_name,
-      Key: testKey,
-      ContentType: testMimetype,
-    };
-
-    // 特定服务商可能需要额外参数
-    switch (config.provider_type) {
-      case S3ProviderTypes.B2:
-        // B2可能需要特定元数据
-        putCommandParams.Metadata = {
-          "test-purpose": "cloudpaste-s3-test",
+        
+        const corsHeaders = {
+          "access-control-allow-origin": corsResponse.headers.get("access-control-allow-origin"),
+          "access-control-allow-methods": corsResponse.headers.get("access-control-allow-methods"),
+          "access-control-allow-headers": corsResponse.headers.get("access-control-allow-headers"),
         };
-        break;
-    }
-
-    // 创建PutObjectCommand
-    const putCommand = new PutObjectCommand(putCommandParams);
-
-    // 获取预签名URL - 不同服务商可能需要不同过期时间
-    let expiresIn = 300; // 默认5分钟
-
-    const uploadUrl = await getSignedUrl(s3Client, putCommand, { expiresIn });
-    testResult.frontendSim.step1.success = true;
-    testResult.frontendSim.step1.url = uploadUrl.substring(0, 80) + "..."; // 截断显示
-
-    // 步骤2: 模拟前端直接上传
-    testResult.frontendSim.step2 = { name: "XHR文件上传", success: false };
-
-    // 准备请求头，模拟前端XHR上传 (针对不同服务商定制)
-    const uploadHeaders = {
-      "Content-Type": testMimetype,
-      Origin: requestOrigin,
-    };
-
-    // 根据不同服务商添加特定的请求头
-    switch (config.provider_type) {
-      case S3ProviderTypes.B2:
-        // B2需要这些特殊头部
-        uploadHeaders["X-Bz-Content-Sha1"] = "do_not_verify";
-        uploadHeaders["X-Requested-With"] = "XMLHttpRequest";
-        break;
-
-      case S3ProviderTypes.R2:
-        // R2可能需要特定头部
-        break;
-    }
-
-    // 模拟XHR上传
-    const uploadStartTime = performance.now();
-    const uploadResponse = await fetch(uploadUrl, {
-      method: "PUT",
-      headers: uploadHeaders,
-      body: testContent,
-    });
-    const uploadEndTime = performance.now();
-
-    if (uploadResponse.ok) {
-      const uploadDuration = uploadEndTime - uploadStartTime;
-      const uploadSpeed = (testContent.length / (uploadDuration / 1000)).toFixed(2); // 字节/秒
-
-      testResult.frontendSim.step2.success = true;
-      testResult.frontendSim.step2.duration = Math.round(uploadDuration);
-      testResult.frontendSim.step2.speed = `${uploadSpeed} B/s`;
-      testResult.frontendSim.step2.etag = uploadResponse.headers.get("ETag");
-
-      // 不同服务商可能返回不同的头部信息
-      testResult.frontendSim.step2.providerHeaders = {};
-      switch (config.provider_type) {
-        case S3ProviderTypes.B2:
-          // 记录B2特有的响应头
-          testResult.frontendSim.step2.providerHeaders.uploadId = uploadResponse.headers.get("x-bz-file-id");
-          testResult.frontendSim.step2.providerHeaders.sha1 = uploadResponse.headers.get("x-bz-content-sha1");
-          break;
-
-        case S3ProviderTypes.R2:
-          // 记录R2特有的响应头
-          break;
+        
+        corsResult = {
+          status: corsResponse.status,
+          allowOrigin: corsHeaders["access-control-allow-origin"],
+          allowMethods: corsHeaders["access-control-allow-methods"],
+          allowHeaders: corsHeaders["access-control-allow-headers"],
+          corsEnabled: !!corsHeaders["access-control-allow-origin"],
+        };
+        
+        console.log("CORS测试结果:", corsResult);
+      } catch (corsError) {
+        console.error("CORS测试失败:", corsError);
+        corsResult = { error: corsError.message };
       }
-
-      // 步骤3: 模拟前端上传后元数据提交 (模拟completeFileUpload流程)
-      testResult.frontendSim.step3 = { name: "元数据提交", success: false };
-
-      // 在实际前端中，这里会调用completeFileUpload API
-      // 但在测试中，我们只模拟这个过程并标记成功
-      testResult.frontendSim.step3.success = true;
-      testResult.frontendSim.step3.note = "实际前端会调用接口提交元数据";
-
-      // 针对不同服务商的兼容性提示
-      switch (config.provider_type) {
-        case S3ProviderTypes.B2:
-          testResult.frontendSim.step3.providerNote = "B2存储需要在前端上传时添加X-Bz-Content-Sha1头部，CloudPaste已处理此要求。";
-          break;
-
-        case S3ProviderTypes.R2:
-          testResult.frontendSim.step3.providerNote = "Cloudflare R2完全兼容标准S3上传流程，无需特殊处理。";
-          break;
-      }
-
-      // 清理测试文件
-      try {
-        const deleteCommand = new DeleteObjectCommand({
+    }
+    
+    // 清理测试文件
+    try {
+      await s3Client.send(
+        new DeleteObjectCommand({
           Bucket: config.bucket_name,
           Key: testKey,
-        });
-        await s3Client.send(deleteCommand);
-        testResult.frontendSim.fileCleaned = true;
-      } catch (cleanError) {
-        testResult.frontendSim.fileCleaned = false;
-        testResult.frontendSim.cleanError = cleanError.message;
-      }
-
-      // 所有步骤成功，标记整体测试成功
-      testResult.frontendSim.success = true;
-    } else {
-      testResult.frontendSim.step2.success = false;
-      testResult.frontendSim.step2.status = uploadResponse.status;
-      testResult.frontendSim.step2.statusText = uploadResponse.statusText;
-      try {
-        testResult.frontendSim.step2.errorText = await uploadResponse.text();
-      } catch (e) {
-        testResult.frontendSim.step2.errorText = "无法读取错误响应内容";
-      }
-
-      // 添加服务商特定的错误解决提示
-      switch (config.provider_type) {
-        case S3ProviderTypes.B2:
-          testResult.frontendSim.step2.troubleshooting = "B2上传失败可能与Content-SHA1头部有关，确保已正确配置CORS并允许此头部。";
-          break;
-
-        case S3ProviderTypes.R2:
-          testResult.frontendSim.step2.troubleshooting = "R2上传失败通常与CORS配置或权限有关，请检查R2存储桶的CORS设置和访问策略。";
-          break;
-
-        default:
-          testResult.frontendSim.step2.troubleshooting = "上传失败通常与CORS配置、权限设置或预签名URL过期有关。请检查服务配置。";
-      }
+        })
+      );
+      console.log("成功删除测试文件");
+    } catch (deleteError) {
+      console.error("删除测试文件失败:", deleteError);
+      // 不返回失败，因为这只是清理步骤
     }
+    
+    // 返回成功结果
+    return {
+      success: true,
+      message: "S3连接测试成功",
+      details: {
+        upload: !!uploadResult,
+        list: {
+          success: !!listResult,
+          objects: listResult?.Contents?.length || 0,
+        },
+        presignedUrl: presignedResult,
+        cors: corsResult,
+      },
+      config: {
+        name: config.name,
+        provider_type: config.provider_type,
+        endpoint_url: config.endpoint_url,
+        bucket_name: config.bucket_name,
+      },
+    };
   } catch (error) {
-    testResult.frontendSim.error = error.message;
-    if (!testResult.frontendSim.step1?.success) {
-      testResult.frontendSim.failedAt = "获取预签名URL";
-    } else if (!testResult.frontendSim.step2?.success) {
-      testResult.frontendSim.failedAt = "文件上传";
-    } else {
-      testResult.frontendSim.failedAt = "元数据提交";
-    }
-
-    // 添加错误诊断指南
-    testResult.frontendSim.troubleshooting = "测试失败可能是由于网络连接问题、S3配置错误或凭证无效。请检查您的配置并重试。";
+    console.error("S3连接测试失败:", error);
+    return {
+      success: false,
+      message: "S3连接测试失败: " + error.message,
+      error: error.message || "未知错误",
+      config: {
+        name: config.name,
+        provider_type: config.provider_type,
+        endpoint_url: config.endpoint_url,
+        bucket_name: config.bucket_name,
+      },
+    };
   }
-
-  // 更新最后使用时间
-  await db
-      .prepare(
-          `
-      UPDATE ${DbTables.S3_CONFIGS}
-      SET last_used = ?
-      WHERE id = ?
-    `
-      )
-      .bind(getLocalTimeString(), id)
-      .run();
-
-  // 生成友好的测试结果消息
-  let message = "S3配置测试";
-
-  // 调整成功判断逻辑，更重视前端模拟测试结果
-  // 基础连接成功条件：读权限必须可用
-  let basicConnectSuccess = testResult.read.success;
-  // 前端可用条件：跨域配置和前端模拟测试都成功
-  let frontendUsable = testResult.cors.success && testResult.frontendSim?.success;
-
-  // 总体成功状态同时考虑基础连接和前端可用性
-  let overallSuccess = basicConnectSuccess;
-
-  if (basicConnectSuccess) {
-    if (testResult.write.success) {
-      if (testResult.cors.success) {
-        if (testResult.frontendSim?.success) {
-          message += "成功 (读写权限均可用，前端上传测试通过)";
-        } else {
-          message += "部分成功 (读写权限可用，CORS配置正确，但前端上传模拟失败)";
-        }
-      } else {
-        message += "部分成功 (读写权限可用，但CORS配置有问题)";
-      }
-    } else {
-      message += "部分成功 (仅读权限可用)";
-    }
-  } else {
-    message += "失败 (读取权限不可用)";
-  }
-
-  // 测试结果的全局提示说明
-  testResult.globalNote = "读写测试仅验证基本连接和权限，通过后端直接测试；CORS测试验证跨域基础配置是否正确；前端模拟测试才是判断前端能否直接上传的最终依据";
-
-  return {
-    success: overallSuccess,
-    message,
-    result: testResult,
-  };
 }
 
 /**
