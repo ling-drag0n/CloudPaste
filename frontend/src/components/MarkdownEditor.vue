@@ -238,6 +238,16 @@
         </svg>
         <span>复制为纯文本</span>
       </div>
+      <div class="px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer flex items-center" @click="exportWordDocument">
+        <svg class="h-4 w-4 mr-2" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          <path d="M14 2v6h6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          <path d="M16 13H8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          <path d="M16 17H8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          <path d="M10 9H8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+        <span>导出为Word文档</span>
+      </div>
     </div>
   </div>
 </template>
@@ -253,6 +263,10 @@ import { useRouter, useRoute } from "vue-router";
 import QRCode from "qrcode";
 import { getFullApiUrl } from "../api/config.js";
 import { ApiStatus } from "../api/ApiStatus";
+// 导入Word导出服务
+import markdownToWord from "../utils/markdownToWord";
+// 导入FileSaver用于下载文件
+import { saveAs } from "file-saver";
 
 // 使用i18n
 const { t } = useI18n();
@@ -1266,6 +1280,55 @@ const copyAsPlainText = () => {
   const plainText = tempDiv.textContent || tempDiv.innerText || "";
   copyToClipboard(plainText, "已复制为纯文本格式");
   closeCopyFormatMenu();
+};
+
+// 导出为Word文档
+const exportWordDocument = async () => {
+  if (!editor) return;
+
+  // 显示状态消息
+  savingStatus.value = "正在生成Word文档...";
+
+  try {
+    // 获取Markdown内容
+    const markdownContent = editor.getValue();
+
+    if (!markdownContent) {
+      savingStatus.value = "没有内容可导出";
+      setTimeout(() => {
+        savingStatus.value = "";
+      }, 3000);
+      return;
+    }
+
+    // 使用我们的服务转换成Word文档
+    const blob = await markdownToWord(markdownContent, {
+      title: "Markdown导出文档",
+    });
+
+    // 生成文件名 - 使用日期和时间
+    const now = new Date();
+    const dateStr = now.toISOString().slice(0, 10);
+    const timeStr = now.toTimeString().slice(0, 8).replace(/:/g, "-");
+    const fileName = `markdown-${dateStr}-${timeStr}.docx`;
+
+    // 使用file-saver保存文件
+    saveAs(blob, fileName);
+
+    // 显示成功消息
+    savingStatus.value = "Word文档已生成并下载";
+    setTimeout(() => {
+      savingStatus.value = "";
+    }, 3000);
+  } catch (error) {
+    console.error("导出Word文档时出错:", error);
+    savingStatus.value = "导出失败，请稍后重试";
+    setTimeout(() => {
+      savingStatus.value = "";
+    }, 3000);
+  } finally {
+    closeCopyFormatMenu();
+  }
 };
 
 // 通用复制到剪贴板函数
