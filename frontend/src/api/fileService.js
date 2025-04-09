@@ -437,3 +437,89 @@ export async function getPublicFile(slug) {
 export async function verifyFilePassword(slug, password) {
   return await post(`public/files/${slug}/verify`, { password });
 }
+
+/**
+ * 上传文件到WebDAV存储
+ * @param {File} file - 要上传的文件
+ * @param {Object} options - 上传选项
+ * @param {string} options.s3_config_id - WebDAV配置ID
+ * @param {string} [options.slug] - 自定义短链接
+ * @param {string} [options.path] - 自定义路径
+ * @param {string} [options.remark] - 文件备注
+ * @param {string} [options.password] - 文件密码
+ * @param {string} [options.expires_in] - 过期时间（天数）
+ * @param {string} [options.max_views] - 最大查看次数
+ * @param {Function} onProgress - 上传进度回调函数
+ * @returns {Promise<Object>} 上传响应
+ */
+export async function uploadToWebDAV(file, options, onProgress) {
+  try {
+    // 获取更准确的MIME类型
+    const accurateMimeType = getAccurateMimeType(file);
+    
+    // 通过预签名API获取上传信息
+    const presignedData = await getUploadPresignedUrl({
+      s3_config_id: options.s3_config_id,
+      filename: file.name,
+      mimetype: accurateMimeType,
+      path: options.path,
+      slug: options.slug,
+      size: file.size,
+    });
+    
+    if (!presignedData.success || !presignedData.data) {
+      throw new Error(presignedData.message || "获取WebDAV上传信息失败");
+    }
+    
+    const { upload_url, file_id, storage_path } = presignedData.data;
+    
+    // 创建表单数据
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("s3_config_id", options.s3_config_id);
+    formData.append("storagePath", storage_path);
+    
+    // 使用POST请求通过Worker代理上传到WebDAV
+    return await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      
+      // 设置进度监听
+      xhr.upload.addEventListener("progress", (event) => {
+        if (event.lengthComputable && typeof onProgress === "function") {
+          const progress = Math.round((event.loaded / event.total) * 100);
+          onProgress(progress, event.loaded, event.total);
+        }
+      });
+      
+      xhr.addEventListener("load", () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const response = JSON.parse(xhr.responseText);
+            resolve(response);
+          } catch (error) {
+            reject(new Error("解析上传响应失败"));
+          }
+        } else {
+          console.error("WebDAV上传失败:", xhr.status, xhr.statusText, xhr.responseText);
+          reject(new Error(`WebDAV上传失败: ${xhr.status} ${xhr.statusText}`));
+        }
+      });
+      
+      xhr.addEventListener("error", () => {
+        reject(new Error("WebDAV上传过程中发生网络错误"));
+      });
+      
+      xhr.addEventListener("abort", () => {
+        reject(new Error("WebDAV上传被取消"));
+      });
+      
+      // 发送请求
+      xhr.open("POST", upload_url, true);
+      xhr.send(formData);
+    });
+    
+  } catch (error) {
+    console.error("WebDAV上传文件失败:", error);
+    throw error;
+  }
+}

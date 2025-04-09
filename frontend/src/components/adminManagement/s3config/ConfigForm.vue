@@ -42,6 +42,7 @@ const providerTypes = [
   { value: "Backblaze B2", label: "Backblaze B2" },
   { value: "AWS S3", label: "AWS S3" },
   { value: "Other", label: "其他S3兼容服务" },
+  { value: "WebDAV Storage", label: "WebDAV存储" },
 ];
 
 // 存储容量单位列表
@@ -63,6 +64,8 @@ const getDefaultStorageByProvider = (provider) => {
     case "Cloudflare R2":
       return 10 * 1024 * 1024 * 1024; // 10GB
     case "Backblaze B2":
+      return 10 * 1024 * 1024 * 1024; // 10GB
+    case "WebDAV Storage":
       return 10 * 1024 * 1024 * 1024; // 10GB
     default:
       return 5 * 1024 * 1024 * 1024; // 5GB
@@ -109,15 +112,19 @@ const formTitle = computed(() => {
 // 表单验证
 const formValid = computed(() => {
   // 基本必填字段检查
-  const basicFieldsValid = formData.value.name && formData.value.provider_type && formData.value.endpoint_url && formData.value.bucket_name;
-
+  const basicFieldsValid = formData.value.name && formData.value.provider_type && formData.value.endpoint_url;
+  
+  // WebDAV类型不需要bucket_name
+  const bucketRequired = formData.value.provider_type !== "WebDAV Storage";
+  const bucketValid = !bucketRequired || (bucketRequired && formData.value.bucket_name);
+  
   // 编辑模式下不要求密钥字段必填
   if (props.isEdit) {
-    return basicFieldsValid;
+    return basicFieldsValid && bucketValid;
   }
 
   // 新建模式下需要检查密钥字段
-  return basicFieldsValid && formData.value.access_key_id && formData.value.secret_access_key;
+  return basicFieldsValid && bucketValid && formData.value.access_key_id && formData.value.secret_access_key;
 });
 
 // 根据提供商类型预填默认端点
@@ -141,6 +148,11 @@ const updateEndpoint = () => {
       break;
     case "AWS S3":
       formData.value.endpoint_url = "https://s3.amazonaws.com";
+      formData.value.path_style = false;
+      break;
+    case "WebDAV Storage":
+      formData.value.endpoint_url = "https://your-webdav-server.com/webdav/";
+      formData.value.region = "";
       formData.value.path_style = false;
       break;
     default:
@@ -312,6 +324,16 @@ const closeModal = () => {
             <p class="mt-1 text-xs" :class="darkMode ? 'text-gray-400' : 'text-gray-500'">为此配置指定一个易于识别的名称</p>
           </div>
 
+          <!-- 提供商说明 -->
+          <div v-if="formData.provider_type === 'WebDAV Storage'" class="mt-2 p-3 bg-blue-100 dark:bg-blue-900/30 rounded-md">
+            <p class="text-sm text-blue-700 dark:text-blue-300">
+              WebDAV存储配置说明：
+              <br>- 端点URL为WebDAV服务器地址，如 https://nextcloud.example.com/remote.php/dav/files/username/
+              <br>- 存储桶名称对WebDAV是可选的，可用作基础目录路径
+              <br>- 访问密钥ID为WebDAV用户名，密钥为密码
+            </p>
+          </div>
+
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label for="provider_type" class="block text-sm font-medium mb-1" :class="darkMode ? 'text-gray-200' : 'text-gray-700'">
@@ -332,17 +354,21 @@ const closeModal = () => {
 
             <div>
               <label for="bucket_name" class="block text-sm font-medium mb-1" :class="darkMode ? 'text-gray-200' : 'text-gray-700'">
-                存储桶名称 <span class="text-red-500">*</span>
+                <span v-if="formData.provider_type === 'WebDAV Storage'">基础目录 (可选)</span>
+                <span v-else>存储桶名称 <span class="text-red-500">*</span></span>
               </label>
               <input
                 type="text"
                 id="bucket_name"
                 v-model="formData.bucket_name"
-                required
+                :required="formData.provider_type !== 'WebDAV Storage'"
                 class="block w-full px-3 py-2 rounded-md text-sm transition-colors duration-200"
                 :class="darkMode ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' : 'border-gray-300 text-gray-900 placeholder-gray-500'"
-                placeholder="my-bucket"
+                :placeholder="formData.provider_type === 'WebDAV Storage' ? 'folder/subfolder (可选)' : 'my-bucket'"
               />
+              <p v-if="formData.provider_type === 'WebDAV Storage'" class="mt-1 text-xs" :class="darkMode ? 'text-gray-400' : 'text-gray-500'">
+                WebDAV的基础目录是可选的，会添加到文件存储路径前
+              </p>
             </div>
           </div>
 
@@ -368,7 +394,7 @@ const closeModal = () => {
               </select>
             </div>
             <p class="mt-1 text-xs" :class="darkMode ? 'text-gray-400' : 'text-gray-500'">
-              {{ formData.provider_type === "Cloudflare R2" ? "默认为10GB" : formData.provider_type === "Backblaze B2" ? "默认为1TB" : "默认为5GB" }}
+              {{ formData.provider_type === "Cloudflare R2" ? "默认为10GB" : formData.provider_type === "Backblaze B2" ? "默认为1TB" : formData.provider_type === "WebDAV Storage" ? "默认为10GB" : "默认为5GB" }}
             </p>
           </div>
 
@@ -417,42 +443,40 @@ const closeModal = () => {
           </div>
 
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <!-- 访问密钥ID -->
             <div>
               <label for="access_key_id" class="block text-sm font-medium mb-1" :class="darkMode ? 'text-gray-200' : 'text-gray-700'">
-                访问密钥ID <span class="text-red-500">{{ !isEdit ? "*" : "" }}</span>
+                <span v-if="formData.provider_type === 'WebDAV Storage'">WebDAV用户名</span>
+                <span v-else>访问密钥ID</span>
+                <span v-if="!props.isEdit" class="text-red-500">*</span>
               </label>
               <input
                 type="text"
                 id="access_key_id"
                 v-model="formData.access_key_id"
-                :required="!isEdit"
+                :required="!props.isEdit"
+                autocomplete="off"
                 class="block w-full px-3 py-2 rounded-md text-sm transition-colors duration-200"
                 :class="darkMode ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' : 'border-gray-300 text-gray-900 placeholder-gray-500'"
-                placeholder="AKIAXXXXXXXXXXXXXXXX"
+                :placeholder="props.isEdit ? '留空保持不变' : (formData.provider_type === 'WebDAV Storage' ? 'username' : 'AKIAXXXXXXXXXXXXXXXX')"
               />
-              <p class="mt-1 text-xs" :class="darkMode ? 'text-gray-400' : 'text-gray-500'">
-                {{ isEdit ? "留空表示保持不变" : "S3访问密钥ID" }}
-              </p>
             </div>
 
-            <!-- 秘密访问密钥 -->
             <div>
               <label for="secret_access_key" class="block text-sm font-medium mb-1" :class="darkMode ? 'text-gray-200' : 'text-gray-700'">
-                秘密访问密钥 <span class="text-red-500">{{ !isEdit ? "*" : "" }}</span>
+                <span v-if="formData.provider_type === 'WebDAV Storage'">WebDAV密码</span>
+                <span v-else>秘密访问密钥</span>
+                <span v-if="!props.isEdit" class="text-red-500">*</span>
               </label>
               <input
                 type="password"
                 id="secret_access_key"
                 v-model="formData.secret_access_key"
-                :required="!isEdit"
+                :required="!props.isEdit"
+                autocomplete="off"
                 class="block w-full px-3 py-2 rounded-md text-sm transition-colors duration-200"
                 :class="darkMode ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' : 'border-gray-300 text-gray-900 placeholder-gray-500'"
-                placeholder="••••••••••••••••••••••••••••••"
+                :placeholder="props.isEdit ? '留空保持不变' : '密钥'"
               />
-              <p class="mt-1 text-xs" :class="darkMode ? 'text-gray-400' : 'text-gray-500'">
-                {{ isEdit ? "留空表示保持不变" : "S3秘密访问密钥" }}
-              </p>
             </div>
           </div>
 

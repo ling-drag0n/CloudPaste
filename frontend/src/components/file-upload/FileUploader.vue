@@ -344,7 +344,7 @@
 import { ref, reactive, defineProps, defineEmits, getCurrentInstance, onMounted, watch } from "vue";
 import { api } from "../../api";
 import { API_BASE_URL } from "../../api/config"; // 导入API_BASE_URL
-import { directUploadFile } from "../../api/fileService"; // 导入新的直接上传函数
+import { directUploadFile, uploadToWebDAV } from "../../api/fileService"; // 导入直接上传函数，包括WebDAV上传
 import { getMaxUploadSize, deleteFile, deleteUserFile } from "../../api/fileService"; // 导入获取最大上传大小函数和删除文件函数
 import { useI18n } from "vue-i18n"; // 导入i18n
 
@@ -697,47 +697,95 @@ const submitUpload = async () => {
       uploadSpeed.value = '';
       
       try {
-        // 使用新的直接上传到S3的方法
-        const response = await directUploadFile(
-          file,
-          {
-            s3_config_id: formData.s3_config_id,
-            slug: formData.slug ? `${formData.slug}-${i+1}` : "", // 为每个文件生成不同的slug
-            path: formData.path || "",
-            remark: formData.remark || "",
-            password: formData.password || "",
-            expires_in: formData.expires_in || "0",
-            max_views: formData.max_views !== undefined ? Number(formData.max_views) : 0,
-          },
-          // 进度回调函数
-          (progress, loaded, total) => {
-            uploadProgress.value = progress;
+        // 获取选中的S3配置信息
+        const selectedConfig = props.s3Configs.find(config => config.id === formData.s3_config_id);
+        const isWebDAV = selectedConfig && selectedConfig.provider_type === 'WebDAV';
+        
+        let response;
+        
+        // 根据提供商类型选择不同的上传方法
+        if (isWebDAV) {
+          // 使用WebDAV上传方法
+          response = await uploadToWebDAV(
+            file,
+            {
+              s3_config_id: formData.s3_config_id,
+              slug: formData.slug ? `${formData.slug}-${i+1}` : "", // 为每个文件生成不同的slug
+              path: formData.path || "",
+              remark: formData.remark || "",
+              password: formData.password || "",
+              expires_in: formData.expires_in || "0",
+              max_views: formData.max_views !== undefined ? Number(formData.max_views) : 0,
+            },
+            // 进度回调函数
+            (progress, loaded, total) => {
+              uploadProgress.value = progress;
 
-            // 计算上传速度
-            const now = Date.now();
-            const timeElapsed = (now - lastTime.value) / 1000; // 转换为秒
+              // 计算上传速度
+              const now = Date.now();
+              const timeElapsed = (now - lastTime.value) / 1000; // 转换为秒
 
-            if (timeElapsed > 0.5) {
-              // 每0.5秒更新一次速度
-              const loadedChange = loaded - lastLoaded.value; // 这段时间内上传的字节数
-              const speed = loadedChange / timeElapsed; // 字节/秒
+              if (timeElapsed > 0.5) {
+                // 每0.5秒更新一次速度
+                const loadedChange = loaded - lastLoaded.value; // 这段时间内上传的字节数
+                const speed = loadedChange / timeElapsed; // 字节/秒
 
-              uploadSpeed.value = formatSpeed(speed);
+                uploadSpeed.value = formatSpeed(speed);
 
-              // 更新上次加载值和时间
-              lastLoaded.value = loaded;
-              lastTime.value = now;
+                // 更新上次加载值和时间
+                lastLoaded.value = loaded;
+                lastTime.value = now;
+              }
             }
-          },
-          // 获取XHR实例的回调
-          (xhr) => {
-            activeXhr.value = xhr;
-          },
-          // 获取文件ID的回调
-          (fileId) => {
-            currentFileId.value.push(fileId);
+          );
+          
+          // 如果响应包含文件ID，添加到currentFileId用于可能的取消操作
+          if (response && response.data && response.data.id) {
+            currentFileId.value.push(response.data.id);
           }
-        );
+        } else {
+          // 使用原有的S3直接上传方法
+          response = await directUploadFile(
+            file,
+            {
+              s3_config_id: formData.s3_config_id,
+              slug: formData.slug ? `${formData.slug}-${i+1}` : "", // 为每个文件生成不同的slug
+              path: formData.path || "",
+              remark: formData.remark || "",
+              password: formData.password || "",
+              expires_in: formData.expires_in || "0",
+              max_views: formData.max_views !== undefined ? Number(formData.max_views) : 0,
+            },
+            // 进度回调函数
+            (progress, loaded, total) => {
+              uploadProgress.value = progress;
+
+              // 计算上传速度
+              const now = Date.now();
+              const timeElapsed = (now - lastTime.value) / 1000; // 转换为秒
+
+              if (timeElapsed > 0.5) {
+                // 每0.5秒更新一次速度
+                const loadedChange = loaded - lastLoaded.value; // 这段时间内上传的字节数
+                const speed = loadedChange / timeElapsed; // 字节/秒
+
+                uploadSpeed.value = formatSpeed(speed);
+
+                // 更新上次加载值和时间
+                lastLoaded.value = loaded;
+                lastTime.value = now;
+              }
+            },
+            // 获取XHR实例的回调
+            (xhr) => {
+              activeXhr.value = xhr;
+            },
+            // 获取文件ID的回调
+            (fileId) => {
+              currentFileId.value.push(fileId);
+            }
+          );
+        }
 
         // 记录成功的上传
         successCount++;
