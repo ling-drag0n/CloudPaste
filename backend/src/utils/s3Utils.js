@@ -8,7 +8,7 @@ import { ConfiguredRetryStrategy } from "@smithy/util-retry";
 import { decryptValue } from "./crypto";
 import { S3ProviderTypes } from "../constants";
 import { buildWebDAVUrl, generateWebDAVPutUrl, generateWebDAVUrl, deleteFileFromWebDAV } from "./webdavUtils";
-import htpaw from "htpaw";
+import btoa from "btoa";
 
 /**
  * 创建S3客户端
@@ -127,14 +127,14 @@ export async function generatePresignedPutUrl(s3Config, storagePath, mimetype, e
   // 如果是WebDAV存储，使用WebDAV上传URL生成逻辑
   if (s3Config.provider_type === S3ProviderTypes.WEBDAV) {
     const webdavInfo = await generateWebDAVPutUrl(s3Config, storagePath, encryptionSecret);
-    // 使用htpaw生成Authorization头
-    const authString = htpaw.basicAuth(webdavInfo.auth.username, webdavInfo.auth.password);
+    // 创建Basic认证头
+    const authHeader = `Basic ${btoa(`${webdavInfo.auth.username}:${webdavInfo.auth.password}`)}`;
     // 将WebDAV信息转换为前端可以使用的格式
     return {
       url: webdavInfo.url,
       method: webdavInfo.method,
       headers: {
-        'Authorization': authString,
+        'Authorization': authHeader,
         'Content-Type': mimetype
       }
     };
@@ -191,8 +191,8 @@ export async function generatePresignedUrl(s3Config, storagePath, encryptionSecr
   // 如果是WebDAV存储，使用WebDAV下载URL生成逻辑
   if (s3Config.provider_type === S3ProviderTypes.WEBDAV) {
     const webdavInfo = await generateWebDAVUrl(s3Config, storagePath, encryptionSecret, forceDownload);
-    // 使用htpaw安全序列化认证信息
-    const authData = htpaw.encodeData(webdavInfo.auth);
+    // 安全序列化认证信息
+    const authData = btoa(JSON.stringify(webdavInfo.auth));
     // 构造特殊格式URL，包含认证信息
     return `${webdavInfo.url}#webdav:${authData}`;
   }

@@ -3,7 +3,18 @@
  */
 
 import { decryptValue } from "./crypto";
-import htpaw from "htpaw";
+// 导入btoa用于Base64编码
+import btoa from "btoa";
+
+/**
+ * 创建基本认证头
+ * @param {string} username - 用户名
+ * @param {string} password - 密码
+ * @returns {string} 基本认证头值
+ */
+function createBasicAuthHeader(username, password) {
+  return `Basic ${btoa(`${username}:${password}`)}`;
+}
 
 /**
  * 创建WebDAV客户端配置
@@ -137,14 +148,14 @@ export async function deleteFileFromWebDAV(webdavConfig, storagePath, encryption
     // 构建文件URL
     const url = `${config.endpoint}${normalizedPath}`;
     
-    // 使用htpaw库创建基本认证字符串
-    const authString = htpaw.basicAuth(config.username, config.password);
+    // 创建认证头
+    const authHeader = createBasicAuthHeader(config.username, config.password);
     
     // 准备DELETE请求
     const response = await fetch(url, {
       method: 'DELETE',
       headers: {
-        'Authorization': authString
+        'Authorization': authHeader
       }
     });
     
@@ -170,14 +181,14 @@ export async function testWebDAVConnection(webdavConfig, encryptionSecret) {
   try {
     const config = await createWebDAVConfig(webdavConfig, encryptionSecret);
     
-    // 使用htpaw库创建基本认证字符串
-    const authString = htpaw.basicAuth(config.username, config.password);
+    // 创建认证头
+    const authHeader = createBasicAuthHeader(config.username, config.password);
     
     // 准备PROPFIND请求(查询根目录)
     const response = await fetch(config.endpoint, {
       method: 'PROPFIND',
       headers: {
-        'Authorization': authString,
+        'Authorization': authHeader,
         'Depth': '0',
         'Content-Type': 'application/xml'
       }
@@ -220,14 +231,14 @@ export async function createWebDAVDirectory(webdavConfig, directoryPath, encrypt
     // 构建目录URL
     const url = `${config.endpoint}${normalizedPath}`;
     
-    // 使用htpaw库创建基本认证字符串
-    const authString = htpaw.basicAuth(config.username, config.password);
+    // 创建认证头
+    const authHeader = createBasicAuthHeader(config.username, config.password);
     
     // 准备MKCOL请求
     const response = await fetch(url, {
       method: 'MKCOL',
       headers: {
-        'Authorization': authString
+        'Authorization': authHeader
       }
     });
     
