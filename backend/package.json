@@ -20,7 +20,9 @@
     "@aws-sdk/client-s3": "^3.775.0",
     "@aws-sdk/lib-storage": "^3.775.0",
     "@aws-sdk/s3-request-presigner": "^3.775.0",
-    "hono": "^3.2.0"
+    "hono": "^3.2.0",
+    "webdav": "^5.8.0",
+    "btoa": "^1.2.1"
   },
   "devDependencies": {
     "wrangler": "^3.0.0"

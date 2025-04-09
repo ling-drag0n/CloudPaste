@@ -1,5 +1,7 @@
-import { DbTables } from "../constants";
+import { DbTables, S3ProviderTypes } from "../constants";
 import { generatePresignedUrl } from "../utils/s3Utils";
+import { generateWebDAVUrl } from "../utils/webdavUtils";
+import { decryptValue } from "../utils/crypto";
 
 /**
  * 根据slug获取文件
@@ -127,11 +129,18 @@ export async function generateFileDownloadUrl(db, file, encryptionSecret, reques
     const s3Config = await db.prepare(`SELECT * FROM ${DbTables.S3_CONFIGS} WHERE id = ?`).bind(file.s3_config_id).first();
     if (s3Config) {
       try {
-        // 生成预览URL，有效期1小时
-        previewUrl = await generatePresignedUrl(s3Config, file.storage_path, encryptionSecret, 3600, false);
+        // WebDAV存储需要特殊处理
+        if (s3Config.provider_type === S3ProviderTypes.WEBDAV) {
+          // 对于WebDAV存储，强制使用代理URL，因为需要在服务器端处理认证
+          previewUrl = proxyPreviewUrl;
+          downloadUrl = proxyDownloadUrl;
+        } else {
+          // 生成预览URL，有效期1小时
+          previewUrl = await generatePresignedUrl(s3Config, file.storage_path, encryptionSecret, 3600, false);
 
-        // 生成下载URL，有效期1小时，强制下载
-        downloadUrl = await generatePresignedUrl(s3Config, file.storage_path, encryptionSecret, 3600, true);
+          // 生成下载URL，有效期1小时，强制下载
+          downloadUrl = await generatePresignedUrl(s3Config, file.storage_path, encryptionSecret, 3600, true);
+        }
       } catch (error) {
         console.error("生成预签名URL错误:", error);
         // 如果生成预签名URL失败，回退到使用原始S3 URL
@@ -144,7 +153,7 @@ export async function generateFileDownloadUrl(db, file, encryptionSecret, reques
     downloadUrl,
     proxyPreviewUrl,
     proxyDownloadUrl,
-    use_proxy: file.use_proxy || 0,
+    use_proxy: file.use_proxy || (file.s3_config_id && s3Config?.provider_type === S3ProviderTypes.WEBDAV ? 1 : 0),
   };
 }
 

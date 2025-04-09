@@ -7,6 +7,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { ConfiguredRetryStrategy } from "@smithy/util-retry";
 import { decryptValue } from "./crypto";
 import { S3ProviderTypes } from "../constants";
+import { buildWebDAVUrl, generateWebDAVPutUrl, generateWebDAVUrl, deleteFileFromWebDAV } from "./webdavUtils";
 
 /**
  * 创建S3客户端
@@ -78,6 +79,11 @@ export async function createS3Client(config, encryptionSecret) {
  * @returns {string} 访问URL
  */
 export function buildS3Url(s3Config, storagePath) {
+  // 如果是WebDAV存储，使用WebDAV URL构建逻辑
+  if (s3Config.provider_type === S3ProviderTypes.WEBDAV) {
+    return buildWebDAVUrl(s3Config, storagePath);
+  }
+
   const bucketName = s3Config.bucket_name;
   const endpointUrl = s3Config.endpoint_url;
 
@@ -117,6 +123,20 @@ export function buildS3Url(s3Config, storagePath) {
  * @returns {Promise<string>} 预签名URL
  */
 export async function generatePresignedPutUrl(s3Config, storagePath, mimetype, encryptionSecret, expiresIn = 3600) {
+  // 如果是WebDAV存储，使用WebDAV上传URL生成逻辑
+  if (s3Config.provider_type === S3ProviderTypes.WEBDAV) {
+    const webdavInfo = await generateWebDAVPutUrl(s3Config, storagePath, encryptionSecret);
+    // 将WebDAV信息转换为前端可以使用的格式
+    return {
+      url: webdavInfo.url,
+      method: webdavInfo.method,
+      headers: {
+        'Authorization': `Basic ${btoa(`${webdavInfo.auth.username}:${webdavInfo.auth.password}`)}`,
+        'Content-Type': mimetype
+      }
+    };
+  }
+
   try {
     // 创建S3客户端
     const s3Client = await createS3Client(s3Config, encryptionSecret);
@@ -165,6 +185,13 @@ export async function generatePresignedPutUrl(s3Config, storagePath, mimetype, e
  * @returns {Promise<string>} 预签名URL
  */
 export async function generatePresignedUrl(s3Config, storagePath, encryptionSecret, expiresIn = 3600, forceDownload = false) {
+  // 如果是WebDAV存储，使用WebDAV下载URL生成逻辑
+  if (s3Config.provider_type === S3ProviderTypes.WEBDAV) {
+    const webdavInfo = await generateWebDAVUrl(s3Config, storagePath, encryptionSecret, forceDownload);
+    // 构造特殊格式URL，包含认证信息
+    return `${webdavInfo.url}#webdav:${btoa(JSON.stringify(webdavInfo.auth))}`;
+  }
+
   try {
     // 创建S3客户端
     const s3Client = await createS3Client(s3Config, encryptionSecret);
@@ -213,6 +240,11 @@ export async function generatePresignedUrl(s3Config, storagePath, encryptionSecr
  * @returns {Promise<boolean>} 是否成功删除
  */
 export async function deleteFileFromS3(s3Config, storagePath, encryptionSecret) {
+  // 如果是WebDAV存储，使用WebDAV删除逻辑
+  if (s3Config.provider_type === S3ProviderTypes.WEBDAV) {
+    return await deleteFileFromWebDAV(s3Config, storagePath, encryptionSecret);
+  }
+
   try {
     const s3Client = await createS3Client(s3Config, encryptionSecret);
 

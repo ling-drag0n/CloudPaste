@@ -6,6 +6,9 @@ import { generatePresignedPutUrl, buildS3Url, deleteFileFromS3 } from "../utils/
 import { validateAdminToken } from "../services/adminService";
 import { checkAndDeleteExpiredApiKey } from "../services/apiKeyService";
 import { hashPassword } from "../utils/crypto";
+import { Hono } from "hono";
+import { authMiddleware } from "../middlewares";
+import { generateWebDAVPutUrl, createWebDAVDirectory } from "../utils/webdavUtils";
 
 // 默认最大上传限制（MB）
 const DEFAULT_MAX_UPLOAD_SIZE_MB = 50;
@@ -585,6 +588,77 @@ export function registerS3UploadRoutes(app) {
     } catch (error) {
       console.error("提交文件错误:", error);
       return c.json(createErrorResponse(ApiStatus.INTERNAL_ERROR, "提交文件失败: " + error.message), ApiStatus.INTERNAL_ERROR);
+    }
+  });
+
+  // 生成WebDAV上传链接
+  app.post("/api/webdav-upload", async (c) => {
+    try {
+      const db = c.env.DB;
+      const encryptionSecret = c.env.ENCRYPTION_SECRET || "default-encryption-key";
+      
+      // 获取请求体
+      const body = await c.req.json();
+      
+      // 提取必要参数
+      const s3ConfigId = body.s3_config_id;
+      const filename = body.filename;
+      const fileSize = parseInt(body.size || "0");
+      const mimetype = body.mimetype || "application/octet-stream";
+      
+      if (!s3ConfigId || !filename) {
+        return c.json(createErrorResponse(ApiStatus.BAD_REQUEST, "缺少必要参数"), ApiStatus.BAD_REQUEST);
+      }
+      
+      // 获取S3配置
+      const s3Config = await db
+        .prepare(`SELECT * FROM ${DbTables.S3_CONFIGS} WHERE id = ?`)
+        .bind(s3ConfigId)
+        .first();
+      
+      if (!s3Config) {
+        return c.json(createErrorResponse(ApiStatus.NOT_FOUND, "存储配置不存在"), ApiStatus.NOT_FOUND);
+      }
+      
+      // 检查是否为WebDAV类型
+      if (s3Config.provider_type !== S3ProviderTypes.WEBDAV) {
+        return c.json(createErrorResponse(ApiStatus.BAD_REQUEST, "该接口仅支持WebDAV存储"), ApiStatus.BAD_REQUEST);
+      }
+      
+      // 生成文件存储路径
+      const folderPrefix = s3Config.default_folder ? (s3Config.default_folder.endsWith("/") ? s3Config.default_folder : s3Config.default_folder + "/") : "";
+      const timestamp = Date.now();
+      const storagePath = `${folderPrefix}${timestamp}_${filename}`;
+      
+      // 确保目录存在
+      if (folderPrefix) {
+        await createWebDAVDirectory(s3Config, folderPrefix, encryptionSecret);
+      }
+      
+      // 生成WebDAV上传URL
+      const webdavInfo = await generateWebDAVPutUrl(s3Config, storagePath, encryptionSecret);
+      
+      return c.json({
+        code: ApiStatus.SUCCESS,
+        success: true,
+        message: "生成WebDAV上传URL成功",
+        data: {
+          url: webdavInfo.url,
+          method: webdavInfo.method,
+          headers: {
+            'Authorization': `Basic ${btoa(`${webdavInfo.auth.username}:${webdavInfo.auth.password}`)}`,
+            'Content-Type': mimetype
+          },
+          storage_path: storagePath,
+          s3_config_id: s3ConfigId
+        }
+      });
+    } catch (error) {
+      console.error("生成WebDAV上传URL出错:", error);
+      return c.json(
+        createErrorResponse(ApiStatus.INTERNAL_ERROR, "生成WebDAV上传URL失败: " + error.message),
+        ApiStatus.INTERNAL_ERROR
+      );
     }
   });
 }

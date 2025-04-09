@@ -16,7 +16,7 @@ import {
   setDefaultS3Config,
   testS3Connection,
 } from "../services/s3ConfigService";
-import { DbTables, ApiStatus } from "../constants";
+import { DbTables, ApiStatus, S3ProviderTypes } from "../constants";
 import { createErrorResponse, getLocalTimeString } from "../utils/common";
 
 const s3ConfigRoutes = new Hono();
@@ -190,18 +190,47 @@ s3ConfigRoutes.post("/api/s3-configs", authMiddleware, async (c) => {
 
   try {
     const body = await c.req.json();
+    
+    // 根据存储类型进行不同的验证
+    if (body.provider_type === S3ProviderTypes.WEBDAV) {
+      // WebDAV类型的特殊验证
+      if (!body.endpoint_url) {
+        return c.json(createErrorResponse(ApiStatus.BAD_REQUEST, "WebDAV服务器地址不能为空"), ApiStatus.BAD_REQUEST);
+      }
+      if (!body.access_key_id) {
+        return c.json(createErrorResponse(ApiStatus.BAD_REQUEST, "WebDAV用户名不能为空"), ApiStatus.BAD_REQUEST);
+      }
+      if (!body.secret_access_key) {
+        return c.json(createErrorResponse(ApiStatus.BAD_REQUEST, "WebDAV密码不能为空"), ApiStatus.BAD_REQUEST);
+      }
+    } else {
+      // S3兼容存储的验证
+      if (!body.bucket_name) {
+        return c.json(createErrorResponse(ApiStatus.BAD_REQUEST, "存储桶名称不能为空"), ApiStatus.BAD_REQUEST);
+      }
+      if (!body.endpoint_url) {
+        return c.json(createErrorResponse(ApiStatus.BAD_REQUEST, "端点URL不能为空"), ApiStatus.BAD_REQUEST);
+      }
+      if (!body.access_key_id) {
+        return c.json(createErrorResponse(ApiStatus.BAD_REQUEST, "访问密钥ID不能为空"), ApiStatus.BAD_REQUEST);
+      }
+      if (!body.secret_access_key) {
+        return c.json(createErrorResponse(ApiStatus.BAD_REQUEST, "访问密钥不能为空"), ApiStatus.BAD_REQUEST);
+      }
+    }
+    
     const config = await createS3Config(db, body, adminId, encryptionSecret);
 
     // 返回创建成功响应
     return c.json({
       code: ApiStatus.CREATED,
-      message: "S3配置创建成功",
+      message: "存储配置创建成功",
       data: config,
-      success: true, // 添加兼容字段
+      success: true,
     });
   } catch (error) {
-    console.error("创建S3配置错误:", error);
-    return c.json(createErrorResponse(ApiStatus.INTERNAL_ERROR, error.message || "创建S3配置失败"), ApiStatus.INTERNAL_ERROR);
+    console.error("创建存储配置错误:", error);
+    return c.json(createErrorResponse(ApiStatus.INTERNAL_ERROR, error.message || "创建存储配置失败"), ApiStatus.INTERNAL_ERROR);
   }
 });
 
@@ -214,16 +243,50 @@ s3ConfigRoutes.put("/api/s3-configs/:id", authMiddleware, async (c) => {
 
   try {
     const body = await c.req.json();
-    await updateS3Config(db, id, body, adminId, encryptionSecret);
+    
+    // 获取原配置以确定存储类型
+    const originalConfig = await getS3ConfigByIdForAdmin(db, id, adminId);
+    
+    // 根据存储类型进行不同的验证
+    if (body.provider_type === S3ProviderTypes.WEBDAV || 
+        (originalConfig.provider_type === S3ProviderTypes.WEBDAV && body.provider_type === undefined)) {
+      // WebDAV类型的特殊验证
+      if (body.endpoint_url !== undefined && !body.endpoint_url) {
+        return c.json(createErrorResponse(ApiStatus.BAD_REQUEST, "WebDAV服务器地址不能为空"), ApiStatus.BAD_REQUEST);
+      }
+      if (body.access_key_id !== undefined && !body.access_key_id) {
+        return c.json(createErrorResponse(ApiStatus.BAD_REQUEST, "WebDAV用户名不能为空"), ApiStatus.BAD_REQUEST);
+      }
+      if (body.secret_access_key !== undefined && !body.secret_access_key) {
+        return c.json(createErrorResponse(ApiStatus.BAD_REQUEST, "WebDAV密码不能为空"), ApiStatus.BAD_REQUEST);
+      }
+    } else {
+      // S3兼容存储的验证
+      if (body.bucket_name !== undefined && !body.bucket_name) {
+        return c.json(createErrorResponse(ApiStatus.BAD_REQUEST, "存储桶名称不能为空"), ApiStatus.BAD_REQUEST);
+      }
+      if (body.endpoint_url !== undefined && !body.endpoint_url) {
+        return c.json(createErrorResponse(ApiStatus.BAD_REQUEST, "端点URL不能为空"), ApiStatus.BAD_REQUEST);
+      }
+      if (body.access_key_id !== undefined && !body.access_key_id) {
+        return c.json(createErrorResponse(ApiStatus.BAD_REQUEST, "访问密钥ID不能为空"), ApiStatus.BAD_REQUEST);
+      }
+      if (body.secret_access_key !== undefined && !body.secret_access_key) {
+        return c.json(createErrorResponse(ApiStatus.BAD_REQUEST, "访问密钥不能为空"), ApiStatus.BAD_REQUEST);
+      }
+    }
+    
+    const config = await updateS3Config(db, id, body, adminId, encryptionSecret);
 
     return c.json({
       code: ApiStatus.SUCCESS,
-      message: "S3配置已更新",
-      success: true, // 添加兼容字段
+      message: "存储配置更新成功",
+      data: config,
+      success: true,
     });
   } catch (error) {
-    console.error("更新S3配置错误:", error);
-    return c.json(createErrorResponse(ApiStatus.INTERNAL_ERROR, error.message || "更新S3配置失败"), ApiStatus.INTERNAL_ERROR);
+    console.error("更新存储配置错误:", error);
+    return c.json(createErrorResponse(ApiStatus.INTERNAL_ERROR, error.message || "更新存储配置失败"), ApiStatus.INTERNAL_ERROR);
   }
 });
 
