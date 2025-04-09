@@ -112,6 +112,19 @@ const { isAdmin } = getAuthStatus();
  */
 const refreshFileInfo = async () => {
   console.log("重新加载文件信息");
+
+  // 如果文件已通过密码验证，记录当前密码以便在刷新后使用
+  if (fileInfo.value && fileInfo.value.passwordVerified && fileInfo.value.currentPassword) {
+    try {
+      // 确保当前密码被保存到会话存储
+      sessionStorage.setItem(`file_password_${fileInfo.value.slug}`, fileInfo.value.currentPassword);
+      console.log("已保存当前密码到会话存储以便刷新");
+    } catch (err) {
+      console.error("无法保存密码到会话存储:", err);
+    }
+  }
+
+  // 重新加载文件信息
   await loadFileInfo();
 };
 
@@ -149,9 +162,34 @@ const loadFileInfo = async () => {
         };
       } else {
         requiresPassword.value = false;
+
+        // 检查并修改预览URL，确保代理URL包含密码参数
+        let previewUrl = response.data.previewUrl;
+        let downloadUrl = response.data.downloadUrl;
+
+        // 对于不需要密码的文件，检查session中是否有存储的密码
+        // 这可能是用户之前访问过需要密码的文件，而后端修改了密码要求
+        let savedPassword = null;
+        try {
+          savedPassword = sessionStorage.getItem(`file_password_${fileSlug}`);
+        } catch (err) {
+          console.error("从会话存储获取密码出错:", err);
+        }
+
+        // 如果有代理URL，并且有保存的密码，添加密码参数
+        if (previewUrl && previewUrl.includes("/api/file-view/") && savedPassword && !previewUrl.includes("password=")) {
+          previewUrl = previewUrl.includes("?") ? `${previewUrl}&password=${encodeURIComponent(savedPassword)}` : `${previewUrl}?password=${encodeURIComponent(savedPassword)}`;
+          console.log("从会话存储中为代理预览URL添加密码参数");
+        }
+
+        // 同样处理下载URL
+        if (downloadUrl && downloadUrl.includes("/api/file-download/") && savedPassword && !downloadUrl.includes("password=")) {
+          downloadUrl = downloadUrl.includes("?") ? `${downloadUrl}&password=${encodeURIComponent(savedPassword)}` : `${downloadUrl}?password=${encodeURIComponent(savedPassword)}`;
+        }
+
         fileUrls.value = {
-          previewUrl: response.data.previewUrl,
-          downloadUrl: response.data.downloadUrl,
+          previewUrl: previewUrl,
+          downloadUrl: downloadUrl,
         };
       }
     } else {
@@ -171,9 +209,22 @@ const loadFileInfo = async () => {
  * @param {Object} data - 包含文件URLs和信息的对象
  */
 const handlePasswordVerified = (data) => {
+  // 检查并修改预览URL，确保代理URL包含密码参数
+  let previewUrl = data.previewUrl;
+  if (previewUrl && previewUrl.includes("/api/file-view/")) {
+    // 确保URL包含密码参数
+    if (data.currentPassword && !previewUrl.includes("password=")) {
+      // 添加密码参数到预览URL
+      previewUrl = previewUrl.includes("?")
+          ? `${previewUrl}&password=${encodeURIComponent(data.currentPassword)}`
+          : `${previewUrl}?password=${encodeURIComponent(data.currentPassword)}`;
+      console.log("已在验证阶段为代理预览URL添加密码参数");
+    }
+  }
+
   // 更新文件URLs
   fileUrls.value = {
-    previewUrl: data.previewUrl,
+    previewUrl: previewUrl, // 使用可能修改过的预览URL
     downloadUrl: data.downloadUrl,
   };
 
