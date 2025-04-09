@@ -3,6 +3,7 @@
  */
 
 import { decryptValue } from "./crypto";
+import htpaw from "htpaw";
 
 /**
  * 创建WebDAV客户端配置
@@ -136,11 +137,14 @@ export async function deleteFileFromWebDAV(webdavConfig, storagePath, encryption
     // 构建文件URL
     const url = `${config.endpoint}${normalizedPath}`;
     
+    // 使用htpaw库创建基本认证字符串
+    const authString = htpaw.basicAuth(config.username, config.password);
+    
     // 准备DELETE请求
     const response = await fetch(url, {
       method: 'DELETE',
       headers: {
-        'Authorization': 'Basic ' + btoa(`${config.username}:${config.password}`)
+        'Authorization': authString
       }
     });
     
@@ -166,11 +170,14 @@ export async function testWebDAVConnection(webdavConfig, encryptionSecret) {
   try {
     const config = await createWebDAVConfig(webdavConfig, encryptionSecret);
     
+    // 使用htpaw库创建基本认证字符串
+    const authString = htpaw.basicAuth(config.username, config.password);
+    
     // 准备PROPFIND请求(查询根目录)
     const response = await fetch(config.endpoint, {
       method: 'PROPFIND',
       headers: {
-        'Authorization': 'Basic ' + btoa(`${config.username}:${config.password}`),
+        'Authorization': authString,
         'Depth': '0',
         'Content-Type': 'application/xml'
       }
@@ -213,11 +220,14 @@ export async function createWebDAVDirectory(webdavConfig, directoryPath, encrypt
     // 构建目录URL
     const url = `${config.endpoint}${normalizedPath}`;
     
+    // 使用htpaw库创建基本认证字符串
+    const authString = htpaw.basicAuth(config.username, config.password);
+    
     // 准备MKCOL请求
     const response = await fetch(url, {
       method: 'MKCOL',
       headers: {
-        'Authorization': 'Basic ' + btoa(`${config.username}:${config.password}`)
+        'Authorization': authString
       }
     });
     

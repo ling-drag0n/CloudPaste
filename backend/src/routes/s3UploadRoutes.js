@@ -1,5 +1,5 @@
 import { DbTables } from "../constants";
-import { ApiStatus } from "../constants";
+import { ApiStatus, S3ProviderTypes } from "../constants";
 import { createErrorResponse, generateFileId, generateShortId, getSafeFileName, getFileNameAndExt, formatFileSize, getLocalTimeString } from "../utils/common";
 import { getMimeType } from "../utils/fileUtils";
 import { generatePresignedPutUrl, buildS3Url, deleteFileFromS3 } from "../utils/s3Utils";
@@ -9,6 +9,7 @@ import { hashPassword } from "../utils/crypto";
 import { Hono } from "hono";
 import { authMiddleware } from "../middlewares";
 import { generateWebDAVPutUrl, createWebDAVDirectory } from "../utils/webdavUtils";
+import htpaw from "htpaw";
 
 // 默认最大上传限制（MB）
 const DEFAULT_MAX_UPLOAD_SIZE_MB = 50;
@@ -638,6 +639,9 @@ export function registerS3UploadRoutes(app) {
       // 生成WebDAV上传URL
       const webdavInfo = await generateWebDAVPutUrl(s3Config, storagePath, encryptionSecret);
       
+      // 使用htpaw库创建认证头
+      const authHeader = htpaw.basicAuth(webdavInfo.auth.username, webdavInfo.auth.password);
+      
       return c.json({
         code: ApiStatus.SUCCESS,
         success: true,
@@ -646,7 +650,7 @@ export function registerS3UploadRoutes(app) {
           url: webdavInfo.url,
           method: webdavInfo.method,
           headers: {
-            'Authorization': `Basic ${btoa(`${webdavInfo.auth.username}:${webdavInfo.auth.password}`)}`,
+            'Authorization': authHeader,
             'Content-Type': mimetype
           },
           storage_path: storagePath,

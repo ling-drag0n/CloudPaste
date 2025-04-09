@@ -2,6 +2,7 @@ import { DbTables, S3ProviderTypes } from "../constants";
 import { verifyPassword, decryptValue } from "../utils/crypto";
 import { generatePresignedUrl, deleteFileFromS3 } from "../utils/s3Utils";
 import { generateWebDAVUrl } from "../utils/webdavUtils";
+import htpaw from "htpaw";
 
 /**
  * 从数据库获取文件信息
@@ -255,11 +256,14 @@ async function handleWebDAVFileDownload(file, webdavConfig, encryptionSecret, fo
     // 获取WebDAV文件信息
     const webdavInfo = await generateWebDAVUrl(webdavConfig, file.storage_path, encryptionSecret, forceDownload);
     
+    // 使用htpaw库创建基本认证头
+    const authHeader = htpaw.basicAuth(webdavInfo.auth.username, webdavInfo.auth.password);
+    
     // 设置请求WebDAV服务器的选项
     const fetchOptions = {
       method: 'GET',
       headers: {
-        'Authorization': `Basic ${btoa(`${webdavInfo.auth.username}:${webdavInfo.auth.password}`)}`
+        'Authorization': authHeader
       }
     };
     
