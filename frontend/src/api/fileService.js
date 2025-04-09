@@ -1,4 +1,5 @@
 import { get, post, put, del } from "./client";
+import { getFullApiUrl } from "./config";
 
 /**
  * 获取S3配置列表
@@ -471,13 +472,23 @@ export async function uploadToWebDAV(file, options, onProgress) {
       throw new Error(presignedData.message || "获取WebDAV上传信息失败");
     }
     
-    const { upload_url, file_id, storage_path } = presignedData.data;
+    // 打印预签名数据，便于调试
+    console.log("WebDAV预签名数据:", presignedData.data);
     
-    // 创建表单数据
+    // 获取预签名数据中的信息
+    const { file_id, storage_path, upload } = presignedData.data;
+    
+    // 创建表单数据 - 确保字段名称与后端预期一致
     const formData = new FormData();
     formData.append("file", file);
     formData.append("s3_config_id", options.s3_config_id);
     formData.append("storagePath", storage_path);
+    
+    // 添加文件额外信息
+    if (options.remark) formData.append("remark", options.remark);
+    if (options.password) formData.append("password", options.password);
+    if (options.expires_in) formData.append("expires_in", options.expires_in);
+    if (options.max_views !== undefined) formData.append("max_views", options.max_views);
     
     // 使用POST请求通过Worker代理上传到WebDAV
     return await new Promise((resolve, reject) => {
@@ -495,6 +506,12 @@ export async function uploadToWebDAV(file, options, onProgress) {
         if (xhr.status >= 200 && xhr.status < 300) {
           try {
             const response = JSON.parse(xhr.responseText);
+            
+            // 如果上传成功，但后端没有返回文件ID，则从预签名数据中获取
+            if (response.success && response.data && !response.data.id && file_id) {
+              response.data.id = file_id;
+            }
+            
             resolve(response);
           } catch (error) {
             reject(new Error("解析上传响应失败"));
@@ -505,7 +522,8 @@ export async function uploadToWebDAV(file, options, onProgress) {
         }
       });
       
-      xhr.addEventListener("error", () => {
+      xhr.addEventListener("error", (event) => {
+        console.error("WebDAV上传网络错误:", event);
         reject(new Error("WebDAV上传过程中发生网络错误"));
       });
       
@@ -513,8 +531,25 @@ export async function uploadToWebDAV(file, options, onProgress) {
         reject(new Error("WebDAV上传被取消"));
       });
       
-      // 发送请求
-      xhr.open("POST", upload_url, true);
+      // 使用API基础路径 - 使用getFullApiUrl构建完整URL
+      const apiPath = "s3/webdav-upload";
+      const apiUrl = getFullApiUrl(apiPath);
+      console.log("WebDAV上传请求:", apiUrl, "参数:", Object.fromEntries(formData.entries()));
+      
+      // 设置请求
+      xhr.open("POST", apiUrl, true);
+      xhr.withCredentials = true;  // 确保发送凭证
+      
+      // 从localStorage获取认证令牌并添加到请求头
+      const adminToken = localStorage.getItem("admin_token");
+      const apiKey = localStorage.getItem("api_key");
+      
+      if (adminToken) {
+        xhr.setRequestHeader("Authorization", `Bearer ${adminToken}`);
+      } else if (apiKey) {
+        xhr.setRequestHeader("Authorization", `ApiKey ${apiKey}`);
+      }
+      
       xhr.send(formData);
     });
     
