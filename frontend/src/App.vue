@@ -41,7 +41,7 @@ const isDev = import.meta.env.DEV;
 const showEnvSwitcher = ref(false);
 
 // GitHub仓库链接
-const githubUrl = "https://github.com/ling-drag0n/CloudPaste";
+const githubUrl = "https://google.com";
 
 // 系统主题媒体查询
 let darkModeMediaQuery;
