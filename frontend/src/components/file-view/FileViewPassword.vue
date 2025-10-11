@@ -1,18 +1,19 @@
 <template>
   <div class="max-w-sm w-full mx-auto p-5 border rounded-lg shadow-sm bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700">
-    <h3 class="text-lg font-medium mb-4 text-gray-900 dark:text-white">此文件需要密码访问</h3>
-    <p class="mb-4 text-sm text-gray-600 dark:text-gray-300">此文件已被密码保护，请输入密码查看内容</p>
+    <h3 class="text-lg font-medium mb-4 text-gray-900 dark:text-white">{{ t("fileView.password.title") }}</h3>
+    <p class="mb-4 text-sm text-gray-600 dark:text-gray-300">{{ t("fileView.password.description") }}</p>
 
     <form @submit.prevent="verifyPassword" class="space-y-4">
       <!-- 密码输入框 -->
       <div>
-        <label for="password" class="block text-sm font-medium mb-1 text-gray-700 dark:text-gray-300">密码</label>
+        <label for="password" class="block text-sm font-medium mb-1 text-gray-700 dark:text-gray-300">{{ t("fileView.password.label") }}</label>
         <div class="relative">
           <input
             :type="showPassword ? 'text' : 'password'"
             id="password"
+            autocomplete="current-password"
             v-model="password"
-            placeholder="请输入访问密码"
+            :placeholder="t('fileView.password.placeholder')"
             class="block w-full px-3 py-2 rounded-md shadow-sm border-gray-300 dark:border-gray-600 text-gray-900 dark:text-white dark:bg-gray-700 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 dark:focus:ring-offset-gray-800 password-input"
             :disabled="loading"
           />
@@ -55,9 +56,9 @@
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
           </svg>
-          验证中...
+          {{ t("fileView.password.loading") }}
         </span>
-        <span v-else>提交</span>
+        <span v-else>{{ t("fileView.password.submit") }}</span>
       </button>
     </form>
   </div>
@@ -65,8 +66,11 @@
 
 <script setup>
 import { ref, watch, defineProps, defineEmits } from "vue";
-import { api } from "../../api"; // 导入api模块
+import { useI18n } from "vue-i18n";
+import { api } from "@/api"; // 导入api模块
 import { ApiStatus } from "../../api/ApiStatus"; // 导入API状态码常量
+
+const { t } = useI18n();
 
 const props = defineProps({
   fileId: {
@@ -118,7 +122,7 @@ const verifyPassword = async () => {
       });
     } else {
       // 密码验证失败
-      error.value = response.message || "密码验证失败，请重试";
+      error.value = response.message || t("fileView.password.error");
     }
   } catch (err) {
     console.error("验证密码时出错:", err);
@@ -135,13 +139,13 @@ const verifyPassword = async () => {
     } else {
       // 后备判断：基于错误消息内容判断错误类型（保持兼容性）
       if (err.message && (err.message.includes("密码错误") || err.message.includes("密码不正确") || err.message.includes("401"))) {
-        error.value = "密码错误，请重新输入";
+        error.value = t("fileView.password.error");
       } else if (err.message && (err.message.includes("已过期") || err.message.includes("410"))) {
-        error.value = "此文件已过期或不可访问";
+        error.value = t("fileView.errors.forbidden");
       } else if (err.message && (err.message.includes("找不到") || err.message.includes("不存在") || err.message.includes("404"))) {
-        error.value = "此文件不存在或已被删除";
+        error.value = t("fileView.errors.notFound");
       } else {
-        error.value = err.message || "验证时发生错误，请稍后重试";
+        error.value = err.message || t("fileView.errors.unknown");
       }
     }
   } finally {

@@ -50,8 +50,9 @@ COPY backend/ ./
 RUN mkdir -p /data
 
 # 设置环境变量
+# ERROR: 0,  WARN: 1,  INFO: 2,  DEBUG: 3,
 ENV NODE_ENV=production
-ENV LOG_LEVEL=2
+ENV LOG_LEVEL=3
 ENV RUNTIME_ENV=docker
 ENV DATA_DIR=/data
 ENV PORT=8787

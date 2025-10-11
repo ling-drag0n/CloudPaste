@@ -1,0 +1,149 @@
+/* 编辑器容器样式 */
+.paste-view-editor {
+  width: 100%;
+}
+
+.editor-wrapper {
+  width: 100%;
+}
+
+/* 编辑器容器适应屏幕宽度，添加边框和圆角 */
+:deep(#vditor-editor) {
+  width: 100%;
+  border: 1px solid v-bind('props.darkMode ? "#4B5563" : "#E5E7EB"');
+  border-radius: 0.5rem;
+  margin-bottom: 1rem;
+  overflow: hidden;
+}
+
+/* 纯文本编辑区样式 */
+textarea.w-full {
+  font-family: Consolas, Monaco, "Andale Mono", "Ubuntu Mono", monospace;
+  line-height: 1.5;
+  tab-size: 4;
+  -moz-tab-size: 4;
+}
+
+/* 所有 Vditor 样式使用官方主题 */
+
+/* 表单和按钮通用样式 */
+.form-input {
+  display: block;
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  border-width: 1px;
+  border-radius: 0.375rem;
+  transition: all 0.2s;
+}
+
+/* 主按钮样式 */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.5rem 1rem;
+  font-weight: 500;
+  border-radius: 0.375rem;
+  background-color: v-bind('props.darkMode ? "#3b82f6" : "#2563eb"');
+  color: white;
+  transition: background-color 0.2s;
+}
+
+.btn-primary:hover {
+  background-color: v-bind('props.darkMode ? "#2563eb" : "#1d4ed8"');
+}
+
+.btn-primary:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+/* 图表固定样式 */
+:deep(.diagram-fixed-theme) {
+  background-color: white !important; /* 强制使用白色背景 */
+  color: #333 !important; /* 强制使用深色文本 */
+  filter: none !important; /* 移除任何可能的过滤器效果 */
+}
+
+/* 重复的图表样式已删除 */
+
+/* 确保mermaid图表使用固定样式 */
+:deep(.language-mermaid) {
+  background-color: white !important;
+  padding: 10px !important;
+  border-radius: 4px !important;
+  border: 1px solid #e5e7eb !important;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05) !important;
+}
+
+/* 流程图样式固定 */
+:deep(.language-flow) {
+  background-color: white !important;
+  padding: 10px !important;
+  border-radius: 4px !important;
+  border: 1px solid #e5e7eb !important;
+}
+
+/* PlantUML图表样式固定 */
+:deep(.language-plantuml) {
+  background-color: white !important;
+  padding: 10px !important;
+  border-radius: 4px !important;
+  border: 1px solid #e5e7eb !important;
+}
+
+/* 甘特图样式固定 */
+:deep(.language-gantt) {
+  background-color: white !important;
+  padding: 10px !important;
+  border-radius: 4px !important;
+  border: 1px solid #e5e7eb !important;
+}
+
+/* 图表内的SVG元素样式固定 */
+:deep(.diagram-fixed-theme svg) {
+  background-color: white !important;
+}
+
+/* 列表和制表符样式使用 Vditor 官方主题 */
+
+/* 复制格式菜单样式 */
+#copyFormatMenu {
+  min-width: 180px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  transition: opacity 0.2s ease-in-out, transform 0.2s ease-in-out;
+  transform-origin: top left;
+}
+
+#copyFormatMenu div {
+  transition: background-color 0.15s ease-in-out;
+}
+
+/* 通知提示动画 */
+@keyframes fadeInOut {
+  0% {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  10% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  90% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+}
+
+.notification-toast {
+  animation: fadeInOut 3s ease-in-out forwards;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+/* 文件结束 */

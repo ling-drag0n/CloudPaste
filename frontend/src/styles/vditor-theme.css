@@ -1,0 +1,53 @@
+/**
+ * Vditor 统一主题样式
+ * 使用 Vditor 原生主题系统，只保留必要的自定义样式
+ */
+
+/* 编辑器容器基础样式 */
+.vditor-editor-wrapper {
+  width: 100%;
+}
+
+/* 纯文本编辑器样式 - 完全对照首页实现 */
+.vditor-plain-textarea {
+  resize: vertical;
+  min-height: 400px;
+  font-family: Consolas, Monaco, "Andale Mono", "Ubuntu Mono", monospace;
+  line-height: 1.6;
+  tab-size: 4;
+  -moz-tab-size: 4;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.vditor-plain-textarea:focus {
+  outline: none;
+}
+
+/* 制表符样式支持 - 保持与首页一致 */
+.vditor-reset,
+.vditor-ir,
+.vditor-sv,
+.vditor-wysiwyg {
+  tab-size: 4;
+  -moz-tab-size: 4;
+}
+
+/* 移动端响应式样式 - 完全对照首页实现 */
+@media (max-width: 640px) {
+  .vditor-toolbar {
+    overflow-x: auto;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .vditor-toolbar__item {
+    margin-bottom: 4px;
+  }
+
+  .vditor {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+}
+
+/* 其他样式使用 Vditor 原生主题系统 */

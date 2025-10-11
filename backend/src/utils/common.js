@@ -31,36 +31,8 @@ export function createErrorResponse(statusCode, message) {
   };
 }
 
-/**
- * 获取当前时间的本地格式化字符串，用于数据库时间字段
- * @returns {string} 格式化的本地时间字符串，如：'2023-06-01 14:30:45'
- */
-export function getLocalTimeString() {
-  // 创建一个基于UTC时间的Date对象
-  const now = new Date();
-
-  // 调整为UTC+8时区（中国标准时间）
-  // 获取当前UTC时间的毫秒数
-  const utcTime = now.getTime();
-  // 获取本地时区与UTC的时差（分钟）
-  const localTimezoneOffset = now.getTimezoneOffset();
-  // UTC+8时区比UTC快8小时，即480分钟
-  const cstTimezoneOffset = -480;
-  // 计算需要调整的时差（分钟）
-  const timeDifference = (localTimezoneOffset - cstTimezoneOffset) * 60 * 1000;
-  // 创建调整后的时间对象
-  const cstTime = new Date(utcTime + timeDifference);
-
-  // 从CST时间对象中提取各个部分
-  const year = cstTime.getFullYear();
-  const month = String(cstTime.getMonth() + 1).padStart(2, "0");
-  const day = String(cstTime.getDate()).padStart(2, "0");
-  const hours = String(cstTime.getHours()).padStart(2, "0");
-  const minutes = String(cstTime.getMinutes()).padStart(2, "0");
-  const seconds = String(cstTime.getSeconds()).padStart(2, "0");
-
-  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
-}
+// getLocalTimeString() 函数已被移除
+// 现在所有时间处理都使用 CURRENT_TIMESTAMP 以支持更好的国际化
 
 /**
  * 格式化文件大小
@@ -151,6 +123,29 @@ export function generateShortId() {
 }
 
 /**
+ * 根据系统设置决定是否使用随机后缀
+ * @param {D1Database} db - 数据库实例
+ * @returns {Promise<boolean>} 是否使用随机后缀
+ */
+export async function shouldUseRandomSuffix(db) {
+  try {
+    // 动态导入避免循环依赖
+    const { getSettingMetadata } = await import("../services/systemService.js");
+
+    // 获取文件命名策略设置，默认为覆盖模式
+    const setting = await getSettingMetadata(db, "file_naming_strategy");
+    const strategy = setting ? setting.value : "overwrite";
+
+    // 返回是否使用随机后缀
+    return strategy === "random_suffix";
+  } catch (error) {
+    console.warn("获取文件命名策略失败，使用默认覆盖模式:", error);
+    // 出错时默认使用覆盖模式（不使用随机后缀）
+    return false;
+  }
+}
+
+/**
  * 从文件名中获取文件名和扩展名
  * @param {string} filename - 文件名
  * @returns {Object} 包含文件名和扩展名的对象
@@ -175,5 +170,135 @@ export function getFileNameAndExt(filename) {
  * @returns {string} 安全的文件名
  */
 export function getSafeFileName(fileName) {
-  return fileName.replace(/[^\w\u4e00-\u9fa5\-\. ,!()'"?;:@&+]/g, "_"); // 扩展允许的字符集，包含常用标点符号
+  // 只过滤真正有害的字符：
+  // - 控制字符 (\x00-\x1F, \x7F)
+  // - 路径分隔符 (/ \)
+  // - Windows保留字符 (< > : " | ? *)
+  // 保留所有其他Unicode字符，包括中文标点符号
+  return fileName.replace(/[<>:"|?*\\/\x00-\x1F\x7F]/g, "_");
+}
+
+/**
+ * 验证 slug 格式
+ * @param {string} slug - 要验证的 slug
+ * @returns {boolean} 是否有效
+ */
+export function validateSlugFormat(slug) {
+  if (!slug) return false;
+  const slugRegex = /^[a-zA-Z0-9._-]+$/;
+  return slugRegex.test(slug);
+}
+
+/**
+ * 生成唯一的文件slug
+ * @param {D1Database} db - D1数据库实例
+ * @param {string} customSlug - 自定义slug
+ * @param {boolean} override - 是否覆盖已存在的slug
+ * @param {Object} overrideContext - 覆盖操作的上下文信息（当override=true时需要）
+ * @returns {Promise<string>} 生成的唯一slug
+ */
+export async function generateUniqueFileSlug(db, customSlug = null, override = false, overrideContext = null) {
+  // 动态导入DbTables以避免循环依赖
+  const { DbTables } = await import("../constants/index.js");
+
+  // 如果提供了自定义slug，验证其格式并检查是否已存在
+  if (customSlug) {
+    // 验证slug格式：只允许字母、数字、横杠、下划线和点号
+    if (!validateSlugFormat(customSlug)) {
+      throw new Error("链接后缀格式无效，只能使用字母、数字、下划线、横杠和点号");
+    }
+
+    // 检查slug是否已存在
+    const existingFile = await db.prepare(`SELECT * FROM ${DbTables.FILES} WHERE slug = ?`).bind(customSlug).first();
+
+    // 如果存在并且不覆盖，抛出错误
+    if (existingFile && !override) {
+      throw new Error("链接后缀已被占用，请使用其他链接后缀");
+    } else if (existingFile && override) {
+      // 处理文件覆盖逻辑
+      await handleFileOverride(existingFile, overrideContext);
+      console.log(`允许覆盖已存在的链接后缀: ${customSlug}`);
+    }
+
+    return customSlug;
+  }
+
+  // 生成随机slug (6个字符)
+  let attempts = 0;
+  const maxAttempts = 10;
+  while (attempts < maxAttempts) {
+    const randomSlug = generateShortId();
+
+    // 检查是否已存在
+    const existingFile = await db.prepare(`SELECT id FROM ${DbTables.FILES} WHERE slug = ?`).bind(randomSlug).first();
+    if (!existingFile) {
+      return randomSlug;
+    }
+
+    attempts++;
+  }
+
+  throw new Error("无法生成唯一链接后缀，请稍后再试");
+}
+
+/**
+ * 处理文件覆盖逻辑的辅助函数
+ * @private
+ */
+async function handleFileOverride(existingFile, overrideContext) {
+  if (!overrideContext) {
+    throw new Error("覆盖操作需要提供上下文信息");
+  }
+
+  const { userIdOrInfo, userType, encryptionSecret, repositoryFactory } = overrideContext;
+
+  console.log(`覆盖模式：删除已存在的文件记录 Slug: ${existingFile.slug}`);
+
+  // 检查当前用户是否为文件创建者
+  const currentCreator = userType === "admin" ? userIdOrInfo : `apikey:${userIdOrInfo}`;
+  if (existingFile.created_by !== currentCreator) {
+    console.log(`覆盖操作被拒绝：用户 ${currentCreator} 尝试覆盖 ${existingFile.created_by} 创建的文件`);
+    const { HTTPException } = await import("hono/http-exception");
+    const { ApiStatus } = await import("../constants/index.js");
+    throw new HTTPException(ApiStatus.FORBIDDEN, {
+      message: "您无权覆盖其他用户创建的文件",
+    });
+  }
+
+  try {
+    const fileRepository = repositoryFactory.getFileRepository();
+
+    // 获取S3配置以便删除实际文件（仅对S3存储类型）
+    if (existingFile.storage_type === "S3" && existingFile.storage_config_id) {
+      const s3ConfigRepository = repositoryFactory.getS3ConfigRepository();
+      const s3Config = await s3ConfigRepository.findById(existingFile.storage_config_id);
+
+      if (s3Config) {
+        const { deleteFileFromS3 } = await import("../utils/s3Utils.js");
+        const deleteResult = await deleteFileFromS3(s3Config, existingFile.storage_path, encryptionSecret);
+        if (deleteResult) {
+          console.log(`成功从S3删除文件: ${existingFile.storage_path}`);
+        } else {
+          console.warn(`无法从S3删除文件: ${existingFile.storage_path}，但将继续删除数据库记录`);
+        }
+      }
+    }
+
+    // 删除旧文件的数据库记录
+    await fileRepository.deleteFile(existingFile.id);
+
+    // 删除关联的密码记录（如果有）
+    await fileRepository.deleteFilePasswordRecord(existingFile.id);
+
+    // 清除与文件相关的缓存（仅对S3存储类型）
+    if (existingFile.storage_type === "S3" && existingFile.storage_config_id) {
+      const { clearDirectoryCache } = await import("../cache/index.js");
+      // 需要传递db参数，从repositoryFactory获取
+      const db = repositoryFactory.db || repositoryFactory._db;
+      await clearDirectoryCache({ db, s3ConfigId: existingFile.storage_config_id });
+    }
+  } catch (deleteError) {
+    console.error(`删除旧文件记录时出错: ${deleteError.message}`);
+    // 继续流程，不中断上传
+  }
 }

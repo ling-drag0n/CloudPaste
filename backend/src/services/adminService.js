@@ -1,7 +1,8 @@
-import { DbTables, ApiStatus } from "../constants/index.js";
+import { ApiStatus } from "../constants/index.js";
 import { generateRandomString, createErrorResponse } from "../utils/common.js";
 import { hashPassword, verifyPassword } from "../utils/crypto.js";
 import { HTTPException } from "hono/http-exception";
+import { RepositoryFactory } from "../repositories/index.js";
 
 /**
  * 验证管理员令牌
@@ -13,34 +14,19 @@ export async function validateAdminToken(db, token) {
   console.log("验证管理员令牌:", token.substring(0, 5) + "..." + token.substring(token.length - 5));
 
   try {
-    // 查询令牌是否存在并且未过期
-    const result = await db
-      .prepare(
-        `SELECT admin_id, expires_at 
-         FROM ${DbTables.ADMIN_TOKENS} 
-         WHERE token = ?`
-      )
-      .bind(token)
-      .first();
+    // 使用 AdminRepository 验证令牌
+    const repositoryFactory = new RepositoryFactory(db);
+    const adminRepository = repositoryFactory.getAdminRepository();
 
-    if (!result) {
-      console.log("令牌不存在");
-      return null;
+    const adminId = await adminRepository.validateToken(token);
+
+    if (adminId) {
+      console.log("令牌验证成功，管理员ID:", adminId);
+    } else {
+      console.log("令牌验证失败");
     }
 
-    const expiresAt = new Date(result.expires_at);
-    const now = new Date();
-
-    // 检查令牌是否已过期
-    if (now > expiresAt) {
-      console.log("令牌已过期", { expiresAt: expiresAt.toISOString(), now: now.toISOString() });
-      // 删除过期的令牌
-      await db.prepare(`DELETE FROM ${DbTables.ADMIN_TOKENS} WHERE token = ?`).bind(token).run();
-      return null;
-    }
-
-    console.log("令牌验证成功，管理员ID:", result.admin_id);
-    return result.admin_id;
+    return adminId;
   } catch (error) {
     console.error("验证令牌时发生错误:", error);
     return null;
@@ -60,8 +46,11 @@ export async function login(db, username, password) {
     throw new HTTPException(ApiStatus.BAD_REQUEST, { message: "用户名和密码不能为空" });
   }
 
-  // 查询管理员
-  const admin = await db.prepare(`SELECT id, username, password FROM ${DbTables.ADMINS} WHERE username = ?`).bind(username).first();
+  // 使用 AdminRepository 查询管理员
+  const repositoryFactory = new RepositoryFactory(db);
+  const adminRepository = repositoryFactory.getAdminRepository();
+
+  const admin = await adminRepository.findByUsername(username);
 
   if (!admin) {
     throw new HTTPException(ApiStatus.UNAUTHORIZED, { message: "用户名或密码错误" });
@@ -73,20 +62,36 @@ export async function login(db, username, password) {
     throw new HTTPException(ApiStatus.UNAUTHORIZED, { message: "用户名或密码错误" });
   }
 
+  // ===== token管理：限制并发session数量 =====
+  const MAX_TOKENS_PER_USER = 5; // 每个用户最多5个token
+
+  // 获取该用户的所有token（包括过期的）
+  const existingTokens = await adminRepository.getAllTokensForAdmin(admin.id);
+
+  // 如果超过限制，删除最旧的token，保留最新的5个
+  if (existingTokens.length >= MAX_TOKENS_PER_USER) {
+    // 保留最新的4个token，为新token留出空间
+    const tokensToKeep = existingTokens.slice(0, MAX_TOKENS_PER_USER - 1);
+    const tokensToDelete = existingTokens.slice(MAX_TOKENS_PER_USER - 1);
+
+    for (const tokenToDelete of tokensToDelete) {
+      await adminRepository.deleteToken(tokenToDelete.token);
+    }
+
+    console.log(`已清理 ${tokensToDelete.length} 个旧token（包括过期token），保留最新的 ${tokensToKeep.length} 个，当前用户: ${admin.username}`);
+  }
+  // ===== token管理结束 =====
+
+  // 更新最后登录时间
+  await adminRepository.updateLastLogin(admin.id);
+
   // 生成并存储令牌
   const token = generateRandomString(32);
   const expiresAt = new Date();
   expiresAt.setDate(expiresAt.getDate() + 1); // 1天过期
 
-  await db
-    .prepare(
-      `
-    INSERT INTO ${DbTables.ADMIN_TOKENS} (token, admin_id, expires_at)
-    VALUES (?, ?, ?)
-  `
-    )
-    .bind(token, admin.id, expiresAt.toISOString())
-    .run();
+  // 使用 AdminRepository 创建令牌
+  await adminRepository.createToken(admin.id, token, expiresAt);
 
   // 返回认证信息
   return {
@@ -103,8 +108,11 @@ export async function login(db, username, password) {
  * @returns {Promise<void>}
  */
 export async function logout(db, token) {
-  // 从数据库删除token
-  await db.prepare(`DELETE FROM ${DbTables.ADMIN_TOKENS} WHERE token = ?`).bind(token).run();
+  // 使用 AdminRepository 删除令牌
+  const repositoryFactory = new RepositoryFactory(db);
+  const adminRepository = repositoryFactory.getAdminRepository();
+
+  await adminRepository.deleteToken(token);
 }
 
 /**
@@ -117,8 +125,15 @@ export async function logout(db, token) {
  * @returns {Promise<void>}
  */
 export async function changePassword(db, adminId, currentPassword, newPassword, newUsername) {
+  // 使用 AdminRepository
+  const repositoryFactory = new RepositoryFactory(db);
+  const adminRepository = repositoryFactory.getAdminRepository();
+
   // 验证当前密码
-  const admin = await db.prepare(`SELECT password FROM ${DbTables.ADMINS} WHERE id = ?`).bind(adminId).first();
+  const admin = await adminRepository.findById(adminId);
+  if (!admin) {
+    throw new HTTPException(ApiStatus.NOT_FOUND, { message: "管理员不存在" });
+  }
 
   if (!(await verifyPassword(currentPassword, admin.password))) {
     throw new HTTPException(ApiStatus.UNAUTHORIZED, { message: "当前密码错误" });
@@ -131,44 +146,29 @@ export async function changePassword(db, adminId, currentPassword, newPassword, 
 
   // 如果提供了新用户名，先检查用户名是否已存在
   if (newUsername && newUsername.trim() !== "") {
-    const existingAdmin = await db.prepare(`SELECT id FROM ${DbTables.ADMINS} WHERE username = ? AND id != ?`).bind(newUsername, adminId).first();
+    const usernameExists = await adminRepository.existsByUsername(newUsername, adminId);
 
-    if (existingAdmin) {
+    if (usernameExists) {
       throw new HTTPException(ApiStatus.CONFLICT, { message: "用户名已存在" });
     }
 
     // 更新用户名和密码
-    const newPasswordHash = newPassword ? await hashPassword(newPassword) : admin.password;
+    const updateData = { username: newUsername };
+    if (newPassword) {
+      updateData.password = await hashPassword(newPassword);
+    }
 
-    await db
-      .prepare(
-        `
-      UPDATE ${DbTables.ADMINS} 
-      SET username = ?, password = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `
-      )
-      .bind(newUsername, newPasswordHash, adminId)
-      .run();
+    await adminRepository.updateAdmin(adminId, updateData);
   } else if (newPassword) {
     // 仅更新密码
     const newPasswordHash = await hashPassword(newPassword);
-    await db
-      .prepare(
-        `
-      UPDATE ${DbTables.ADMINS} 
-      SET password = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `
-      )
-      .bind(newPasswordHash, adminId)
-      .run();
+    await adminRepository.updateAdmin(adminId, { password: newPasswordHash });
   } else {
     throw new HTTPException(ApiStatus.BAD_REQUEST, { message: "未提供新密码或新用户名" });
   }
 
   // 成功修改后，删除该管理员的所有认证令牌，强制重新登录
-  await db.prepare(`DELETE FROM ${DbTables.ADMIN_TOKENS} WHERE admin_id = ?`).bind(adminId).run();
+  await adminRepository.deleteTokensByAdminId(adminId);
 }
 
 /**

@@ -6,7 +6,7 @@
 
 ## 请求方法
 
-- **HTTP 方法**: `PUT`
+- **HTTP 方法**: `PUT` 
 
 ## URL 格式
 
@@ -22,18 +22,18 @@ https://{域名}/api/upload-direct/{filename}
 
 以下查询参数可以附加到请求 URL 中:
 
-| 参数名            | 类型   | 必填 | 默认值   | 描述                                                                        |
-| ----------------- | ------ | ---- | -------- | --------------------------------------------------------------------------- |
-| slug              | string | 否   | 自动生成 | 自定义短链接，用于访问文件。只能包含字母、数字、下划线和横杠。              |
-| path              | string | 否   | 空       | 自定义路径，文件将存储在这个路径下。                                        |
-| s3_config_id      | string | 否   | 默认配置 | 指定 S3 配置 ID。若不提供，系统将选择默认配置。                             |
-| expires_in        | number | 否   | 0        | 文件过期时间（小时）。0 表示永不过期。                                      |
-| max_views         | number | 否   | 0        | 文件最大查看次数。0 表示无限制。                                            |
-| remark            | string | 否   | 空       | 文件备注信息。                                                              |
-| password          | string | 否   | 空       | 访问密码，设置后需要密码才能访问文件。                                      |
-| use_proxy         | string | 否   | "1"      | 是否使用代理访问。"1"表示使用代理，"0"表示直接访问 S3。                     |
-| override          | string | 否   | "false"  | 是否覆盖同名 slug 的已存在文件。"true"表示覆盖，"false"表示不覆盖。         |
-| original_filename | string | 否   | "false"  | 是否使用原始文件名存储。"true"表示使用原始文件名，"false"表示添加随机前缀。 |
+| 参数名            | 类型   | 必填 | 默认值   | 描述                                                                                        |
+| ----------------- | ------ | ---- | -------- | ------------------------------------------------------------------------------------------- |
+| slug              | string | 否   | 自动生成 | 自定义短链接，用于访问文件。只能包含字母、数字、下划线和横杠。                              |
+| path              | string | 否   | 空       | 自定义路径，文件将存储在这个路径下。如果提供，会自动添加斜杠作为目录路径。                  |
+| s3_config_id      | string | 否   | 默认配置 | 指定 S3 配置 ID。若不提供，系统将选择默认配置。API 密钥用户只能使用公开配置。               |
+| expires_in        | number | 否   | 0        | 文件过期时间（小时）。0 表示永不过期。                                                      |
+| max_views         | number | 否   | 0        | 文件最大查看次数。0 表示无限制。                                                            |
+| remark            | string | 否   | 空       | 文件备注信息。                                                                              |
+| password          | string | 否   | 空       | 访问密码，设置后需要密码才能访问文件。                                                      |
+| use_proxy         | string | 否   | "1"      | 是否使用代理访问。"1"表示使用代理，"0"表示直接访问 S3。                                     |
+| override          | string | 否   | "false"  | 是否覆盖同名 slug 的已存在文件。"true"表示覆盖，"false"表示不覆盖。只能覆盖自己创建的文件。 |
+| original_filename | string | 否   | "false"  | 是否使用原始文件名存储。"true"表示使用原始文件名，"false"表示添加随机前缀。                 |
 
 ## 请求头
 
@@ -64,27 +64,27 @@ https://{域名}/api/upload-direct/{filename}
     "mimetype": "image/jpeg", // MIME类型
     "size": 12345, // 文件大小(字节)
     "remark": "示例文件", // 备注信息
-    "created_at": "2023-01-01 12:00:00", // 创建时间
+    "created_at": "2023-01-01T12:00:00.000Z", // 创建时间(ISO格式)
     "requires_password": false, // 是否需要密码
     "views": 0, // 当前查看次数
     "max_views": null, // 最大查看次数限制
     "expires_at": null, // 过期时间
 
-    // 文件访问URL
+    // 主要访问URL（根据use_proxy参数决定使用代理还是直接URL）
     "previewUrl": "https://...", // 预览URL
     "downloadUrl": "https://...", // 下载URL
 
-    // 直接S3访问URL (预签名)
+    // 直接S3访问URL (预签名，不包含密码参数)
     "s3_direct_preview_url": "https://...", // S3直接预览URL
     "s3_direct_download_url": "https://...", // S3直接下载URL
 
-    // 代理访问URL (通过服务器)
+    // 代理访问URL (通过服务器，包含密码参数)
     "proxy_preview_url": "https://...", // 代理预览URL
     "proxy_download_url": "https://...", // 代理下载URL
 
     // 其他信息
-    "use_proxy": 1, // 是否使用代理
-    "created_by": "admin:1", // 创建者信息
+    "use_proxy": 1, // 是否使用代理 (1=代理, 0=直接)
+    "created_by": "admin:1", // 创建者信息 (admin:ID 或 apikey:ID)
     "used_original_filename": true // 是否使用了原始文件名
   },
   "success": true
@@ -182,8 +182,11 @@ curl -X PUT "https://your-domain.com/api/upload-direct/important-document.docx?o
 
 ## 注意事项
 
-1. **预签名 URL**: 返回的直接访问 URL 是预签名的，有效期为 1 小时。
+1. **预签名 URL**: 返回的直接访问 URL 是预签名的，有效期根据 S3 配置的`signature_expires_in`设置，默认为 1 小时。
 2. **MIME 类型**: 如果未提供 Content-Type 或提供了通用类型(application/octet-stream)，系统会根据文件扩展名推断 MIME 类型。
 3. **S3 服务商兼容性**: 系统针对不同 S3 服务商(如 AWS S3、Backblaze B2、Cloudflare R2)进行了特殊处理，确保上传过程的兼容性。
-4. **文件覆盖**: 使用`override=true`参数可以覆盖已存在的同名 slug 文件。覆盖过程会删除旧文件并上传新文件，保持相同的访问链接。
-5. **原始文件名**: 使用`original_filename=true`参数时，系统将使用原始文件名存储文件，不添加随机前缀。多次上传同名文件的情况下，会直接覆盖。
+4. **文件覆盖**: 使用`override=true`参数可以覆盖已存在的同名 slug 文件。只能覆盖自己创建的文件，覆盖过程会删除旧文件并上传新文件，保持相同的访问链接。
+5. **原始文件名**: 使用`original_filename=true`参数时，系统将使用原始文件名存储文件，不添加随机前缀。
+6. **存储空间限制**: 系统会检查 S3 配置的存储空间限制，如果上传后会超出限制则拒绝上传。
+7. **权限控制**: API 密钥用户只能使用公开的 S3 配置，管理员可以使用自己创建的所有配置。
+8. **路径处理**: 如果提供了自定义路径，系统会自动添加斜杠确保作为目录路径处理。

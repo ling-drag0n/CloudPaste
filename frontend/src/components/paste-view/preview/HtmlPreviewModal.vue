@@ -1,7 +1,7 @@
 <script setup>
 // HTML预览弹窗组件 - 用于在弹窗中安全预览HTML代码
 // 该组件使用iframe实现HTML的安全渲染，并提供复制代码、在新窗口打开等功能
-import { ref, watch, onMounted, nextTick, onUnmounted } from "vue";
+import { ref, watch, onMounted, nextTick, onUnmounted, computed } from "vue";
 
 // 定义组件接受的属性
 const props = defineProps({
@@ -40,6 +40,83 @@ const errorMessage = ref("");
 // 全屏状态
 const isFullscreen = ref(false);
 
+// 计算HTML模板
+const htmlTemplate = computed(() => {
+  if (!props.htmlContent) return "";
+
+  return `
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HTML预览</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 16px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      line-height: 1.6;
+      color: ${props.darkMode ? "#d4d4d4" : "#333"};
+      background-color: ${props.darkMode ? "#1a1a1a" : "#fff"};
+    }
+
+    /* 响应式设计 */
+    @media (max-width: 768px) {
+      body {
+        padding: 8px;
+        font-size: 14px;
+      }
+    }
+
+    /* 基础样式重置 */
+    * {
+      box-sizing: border-box;
+    }
+
+    img {
+      max-width: 100%;
+      height: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1em 0;
+    }
+
+    th, td {
+      border: 1px solid ${props.darkMode ? "#444" : "#ddd"};
+      padding: 8px;
+      text-align: left;
+    }
+
+    th {
+      background-color: ${props.darkMode ? "#333" : "#f5f5f5"};
+    }
+
+    pre {
+      background-color: ${props.darkMode ? "#2d2d2d" : "#f5f5f5"};
+      padding: 1em;
+      border-radius: 4px;
+      overflow-x: auto;
+    }
+
+    code {
+      background-color: ${props.darkMode ? "#2d2d2d" : "#f5f5f5"};
+      padding: 2px 4px;
+      border-radius: 2px;
+      font-family: 'Courier New', monospace;
+    }
+  </style>
+</head>
+<body>
+  ${props.htmlContent}
+</body>
+</html>
+  `.trim();
+});
+
 // 切换全屏
 const toggleFullscreen = () => {
   isFullscreen.value = !isFullscreen.value;
@@ -71,45 +148,16 @@ const closeModal = () => {
   emit("close");
 };
 
-// 在 iframe 中渲染 HTML
+// 渲染 HTML 内容
 const renderHtml = () => {
-  if (!iframeRef.value) return;
+  if (!props.htmlContent) return;
 
   try {
     renderState.value = "loading";
-
-    // 获取 iframe 文档对象
-    const iframeDoc = iframeRef.value.contentDocument || iframeRef.value.contentWindow.document;
-
-    // 创建带有基本样式的 HTML 文档
-    const htmlTemplate = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <meta charset="UTF-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <style>
-            body {
-              font-family: system-ui, -apple-system, sans-serif;
-              margin: 0;
-              padding: 0;
-              background-color: ${props.darkMode ? "#1a1a1a" : "#ffffff"};
-              color: ${props.darkMode ? "#d4d4d4" : "#374151"};
-            }
-          </style>
-        </head>
-        <body>
-          ${props.htmlContent}
-        </body>
-      </html>
-    `;
-
-    // 清空并设置 iframe 内容
-    iframeDoc.open();
-    iframeDoc.write(htmlTemplate);
-    iframeDoc.close();
-
-    renderState.value = "rendered";
+    // 使用nextTick确保DOM更新后再设置状态
+    nextTick(() => {
+      renderState.value = "rendered";
+    });
   } catch (error) {
     console.error("渲染 HTML 时出错:", error);
     errorMessage.value = error.message || "渲染 HTML 时发生错误";
@@ -207,7 +255,15 @@ onMounted(() => {
         </div>
 
         <!-- iframe 预览 -->
-        <iframe v-show="renderState === 'rendered'" ref="iframeRef" class="preview-iframe" sandbox="allow-same-origin allow-scripts" title="HTML 预览"></iframe>
+        <iframe
+          v-show="renderState === 'rendered'"
+          ref="iframeRef"
+          class="preview-iframe"
+          :srcdoc="htmlTemplate"
+          sandbox="allow-same-origin allow-scripts"
+          title="HTML 预览"
+          @load="renderState = 'rendered'"
+        ></iframe>
       </div>
     </div>
   </div>
@@ -220,10 +276,19 @@ onMounted(() => {
   left: 0;
   width: 100%;
   height: 100%;
-  z-index: 1000;
+  z-index: 1060;
   display: flex;
   justify-content: center;
   align-items: center;
+  padding: 8px;
+  padding-top: 80px;
+}
+
+@media (min-width: 640px) {
+  .html-preview-modal {
+    padding: 16px;
+    padding-top: 16px;
+  }
 }
 
 .modal-overlay {
@@ -240,14 +305,22 @@ onMounted(() => {
   background-color: #ffffff;
   border-radius: 8px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
-  width: 90%;
-  max-width: 900px;
-  height: 80%;
-  max-height: 700px;
+  width: 100%;
+  max-width: 320px;
+  height: 85%;
+  max-height: 600px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   transition: all 0.3s ease;
+}
+
+@media (min-width: 640px) {
+  .modal-container {
+    max-width: 900px;
+    height: 80%;
+    max-height: 700px;
+  }
 }
 
 .modal-container.dark-mode {

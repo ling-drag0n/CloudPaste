@@ -1,5 +1,6 @@
 # Dependencies
 node_modules
+dev-dist
 
 # Wrangler specific
 .wrangler/
@@ -83,7 +84,6 @@ out
 
 # Nuxt.js build output
 .nuxt
-dist
 
 # Gatsby files
 .cache/

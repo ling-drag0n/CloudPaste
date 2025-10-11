@@ -2,10 +2,21 @@
 
 <div align="center">
     <p>
-    <a href="README_CN.md">中文</a> | <a href="README.md">English</a>
+    <a href="README_CN.md">中文</a> | <a href="README.md">English</a> |
+    <a href="https://www.readme-i18n.com/ling-drag0n/CloudPaste?lang=es">Español</a> | 
+    <a href="https://www.readme-i18n.com/ling-drag0n/CloudPaste?lang=fr">français</a> | 
+    <a href="https://www.readme-i18n.com/ling-drag0n/CloudPaste?lang=ja">日本語</a> 
     </p>
     <img width="100" height="100" src="https://img.icons8.com/dusk/100/paste.png" alt="paste"/>
     <h3>基于 Cloudflare 的在线剪贴板和文件分享服务，支持 Markdown 编辑和文件上传</h3>
+</div>
+
+<div align="center">
+    <a href="https://deepwiki.com/ling-drag0n/CloudPaste"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
+    <a href="./LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License"></a>
+    <a href="https://github.com/ling-drag0n/CloudPaste/stargazers"><img src="https://img.shields.io/github/stars/ling-drag0n/CloudPaste.svg" alt="GitHub Stars"></a>
+    <a href="https://www.cloudflare.com/"><img src="https://img.shields.io/badge/Powered%20by-Cloudflare-F38020?logo=cloudflare" alt="Powered by Cloudflare"></a>
+    <a href="https://hub.docker.com/r/dragon730/cloudpaste-backend"><img src="https://img.shields.io/docker/pulls/dragon730/cloudpaste-backend.svg" alt="Docker Pulls"></a>
 </div>
 
 <p align="center">
@@ -122,6 +133,8 @@
    - `S3_BUCKET_NAME`
    - `S3_ENDPOINT`
 
+**以下教程可能过时 具体参考： [Cloudpaste 在线部署文档](https://doc.cloudpaste.qzz.io)**
+
 <details>
 <summary><b>👉 查看完整部署教程</b></summary>
 
@@ -133,6 +146,7 @@
 - [手动部署](#手动部署:)
    - [后端手动部署](#后端手动部署)
    - [前端手动部署](#前端手动部署)
+- [ClawCloud 部署 CloudPaste 教程](#ClawCloud部署CloudPaste教程)
 
 ---
 
@@ -301,6 +315,7 @@ cd CloudPaste/backend
    ```bash
    npm run build
    ```
+
    [构建时需注意！！](https://github.com/ling-drag0n/CloudPaste/issues/6#issuecomment-2818746354)
 
 4. 部署到 Cloudflare Pages
@@ -344,6 +359,38 @@ cd CloudPaste/backend
    ```
 
    根据提示配置项目。
+
+---
+
+## ClawCloud 部署 CloudPaste 教程
+
+#### 每月 10G 免费流量，只适合轻度使用
+
+###### Step 1:
+
+注册链接：[Claw Cloud](https://ap-northeast-1.run.claw.cloud/signin) （不带#AFF）
+不需要信用卡，只要 GitHub 注册日期大于 180 天，每个月都送 5 美金额度。
+
+###### Step 2:
+
+注册后，在首页点击 APP Launchpad 进入，然后点击右上角的 create app
+
+![image.png](https://s2.loli.net/2025/04/21/soj5eWMhxTg1VFt.png)
+
+###### Step 3:
+
+先是部署后端，如图所示（仅供参考）：
+![image.png](https://s2.loli.net/2025/04/21/AHrMnuVyNhK6eUk.png)
+
+后端的数据存储就是这里：
+![image.png](https://s2.loli.net/2025/04/21/ANaoU5Y6cxPOVfw.png)
+
+###### Step 4:
+
+然后是前端，如图所示（仅供参考）：
+![image.png](https://s2.loli.net/2025/04/21/kaT5Qu8ctovFdUp.png)
+
+##### 部署完成即可使用，可根据需要自定义域名
 
 </details>
 
@@ -597,25 +644,145 @@ server {
 
    ![B21](./images/B2/B2-4.png)
 
-关于 3 的配置由于面板无法配置，只能手动配置，需[下载 B2 CLI](https://www.backblaze.com/docs/cloud-storage-command-line-tools)对应工具。具体可以参考："https://docs.cloudreve.org/use/policy/s3#backblaze-b2 " 。
+关于 3 的配置由于面板无法配置，只能手动配置，需[下载 B2 CLI](https://www.backblaze.com/docs/cloud-storage-command-line-tools)对应工具。具体可以参考："https://docs.cloudreve.org/zh/usage/storage/b2 " 。
 
 下载后，在对应下载目录 cmd，在命令行输入以下命令：
 
 ```txt
-b2.exe account authorize   //进行账号登录，根据提示填入之前的 keyID 和 applicationKey
-b2.exe bucket get <bucketName> //你可以执行获取bucket信息，<bucketName>换成桶名字
+b2-windows.exe account authorize   //进行账号登录，根据提示填入之前的 keyID 和 applicationKey
+b2-windows.exe bucket get <bucketName> //你可以执行获取bucket信息，<bucketName>换成桶名字
 ```
 
 windows 配置，采用“.\b2-windows.exe xxx”，
 所以在对应 cli 的 exe 文件夹中 cmd 输入，python 的 cli 也同理：
 
 ```cmd
-b2.exe bucket update <bucketName> allPrivate --cors-rules "[{\"corsRuleName\":\"CloudPaste\",\"allowedOrigins\":[\"*\"],\"allowedHeaders\":[\"*\"],\"allowedOperations\":[\"b2_upload_file\",\"b2_download_file_by_name\",\"b2_download_file_by_id\",\"s3_head\",\"s3_get\",\"s3_put\",\"s3_post\",\"s3_delete\"],\"exposeHeaders\":[\"Etag\",\"content-length\",\"content-type\",\"x-bz-content-sha1\"],\"maxAgeSeconds\":3600}]"
+b2-windows.exe bucket update <bucketName> allPrivate --cors-rules "[{\"corsRuleName\":\"CloudPaste\",\"allowedOrigins\":[\"*\"],\"allowedHeaders\":[\"*\"],\"allowedOperations\":[\"b2_upload_file\",\"b2_download_file_by_name\",\"b2_download_file_by_id\",\"s3_head\",\"s3_get\",\"s3_put\",\"s3_post\",\"s3_delete\"],\"exposeHeaders\":[\"Etag\",\"content-length\",\"content-type\",\"x-bz-content-sha1\"],\"maxAgeSeconds\":3600}]"
 ```
 
 其中<bucketName>换成你的存储桶名字，关于允许跨域的域名 allowedOrigins 可以根据个人配置，这里是允许所有。
 
 5. 已完成跨域配置
+
+## MinIO API 相关获取及跨域配置
+
+1. **部署 MinIO 服务器**
+
+   使用以下 Docker Compose 配置（参考）快速部署 MinIO 服务：
+
+   ```yaml
+   version: "3"
+
+   services:
+     minio:
+       image: minio/minio:RELEASE.2025-02-18T16-25-55Z
+       container_name: minio-server
+       command: server /data --console-address :9001 --address :9000
+       environment:
+         - MINIO_ROOT_USER=minioadmin # 设置管理员用户名
+         - MINIO_ROOT_PASSWORD=minioadmin # 设置管理员密码
+         - MINIO_BROWSER=on
+         - MINIO_SERVER_URL=https://minio.example.com # S3 API 访问地址
+         - MINIO_BROWSER_REDIRECT_URL=https://console.example.com # 控制台访问地址
+       ports:
+         - "9000:9000" # S3 API 端口
+         - "9001:9001" # 控制台端口
+       volumes:
+         - ./data:/data
+         - ./certs:/root/.minio/certs # 如需配置SSL证书
+       restart: always
+   ```
+
+   运行 `docker-compose up -d` 启动服务。
+
+2. **配置反向代理（参考）**
+
+   为确保 MinIO 服务正常工作，特别是文件预览功能，需要正确配置反向代理。以下是 OpenResty/Nginx 的推荐配置：
+
+   **MinIO S3 API 反向代理 (minio.example.com)**:
+
+   ```nginx
+   location / {
+       proxy_pass http://127.0.0.1:9000;
+       proxy_set_header Host $host;
+       proxy_set_header X-Real-IP $remote_addr;
+       proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+       proxy_set_header X-Forwarded-Proto $scheme;
+
+       # HTTP 连接优化
+       proxy_http_version 1.1;
+       proxy_set_header Connection "";  # 启用HTTP/1.1的keepalive
+
+       # 关键配置：解决403错误和预览问题
+       proxy_cache off;
+       proxy_buffering off;
+       proxy_request_buffering off;
+
+       # 无文件大小限制
+       client_max_body_size 0;
+   }
+   ```
+
+   **MinIO 控制台反向代理 (console.example.com)**:
+
+   ```nginx
+   location / {
+       proxy_pass http://127.0.0.1:9001;
+       proxy_set_header Host $host;
+       proxy_set_header X-Real-IP $remote_addr;
+       proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+       proxy_set_header X-Forwarded-Proto $scheme;
+
+       # WebSocket 支持
+       proxy_http_version 1.1;
+       proxy_set_header Upgrade $http_upgrade;
+       proxy_set_header Connection "upgrade";
+
+       # 关键配置
+       proxy_cache off;
+       proxy_buffering off;
+
+       # 无文件大小限制
+       client_max_body_size 0;
+   }
+   ```
+
+3. **访问控制台创建存储桶和创建访问密钥**
+
+   如有详细配置需求，可参考官方文档：https://min.io/docs/minio/container/index.html
+
+   CN: https://min-io.cn/docs/minio/container/index.html
+
+   ![minio-1](./images/minio-1.png)
+
+4. **相关配置（可选）**
+
+   允许的源包含您的前端域名
+   ![minio-2](./images/minio-2.png)
+
+5. **在 CloudPaste 中配置 MinIO**
+
+   - 登录 CloudPaste 管理界面
+   - 进入 "S3 存储配置" → "添加存储配置"
+   - 选择 "其他兼容 S3 服务" 作为提供商类型
+   - 填入以下信息：
+      - 名称：自定义名称
+      - 端点 URL：您的 MinIO 服务地址（如 `https://minio.example.com`）
+      - 存储桶名称：之前创建的存储桶名称
+      - 访问密钥 ID：您的 Access Key
+      - 访问密钥：您的 Secret Key
+      - 区域：可留空
+      - 路径风格访问：必须启用！！！！
+   - 点击 "测试连接" 确认配置正确
+   - 保存配置
+
+6. **注意与故障排查**
+
+   - **注意事项**：如使用 Cloudfare 开启 cdn 可能需要加上 proxy_set_header Accept-Encoding "identity"，同时存在缓存问题，最好仅用 DNS 解析
+   - **403 错误**：确保反向代理配置中包含 `proxy_cache off` 和 `proxy_buffering off`
+   - **预览问题**：确保 MinIO 服务器正确配置了 `MINIO_SERVER_URL` 和 `MINIO_BROWSER_REDIRECT_URL`
+   - **上传失败**：检查 CORS 配置是否正确，确保允许的源包含您的前端域名
+   - **控制台无法访问**：检查 WebSocket 配置是否正确，特别是 `Connection "upgrade"` 设置
 
 ## 更多 S3 相关配置待续......
 
@@ -635,7 +802,7 @@ CloudPaste 提供简易的 WebDAV 协议支持，允许您将存储空间挂载�
    - Basic 认证（用户名+密码）
 - **支持的权限类型**:
    - 管理员账户 - 拥有完整操作权限
-   - API 密钥 - 需启用挂载权限（mount_permission）
+   - API 密钥 - 按需启用
 
 ### 权限配置
 
@@ -707,11 +874,8 @@ location /dav {
 
 3. **⚠️⚠️ Webdav 上传问题**:
 
-   - 预签名上传模式下，需要注意配置对应的 S3 存储的跨域配置
-   - WebDav 的自动推荐模式下，小于 10MB 文件采用直传模式，10-50MB 文件采用分片上传模式，大于 50MB 文件采用预签名上传模式。
-   - 关于 Cloudflare 的 Worker 上传限制，建议使用预签名或直传模式，不要使用分片
+   - Worker 部署的 webdav 上传大小可能受限于 CF 的 CDN 限制 100MB 左右，导致报错 413
    - 对于 Docker 部署，只需注意 nginx 代理配置，上传模式任意。
-   - Windows，Raidrive 等客户端挂载暂不支持拖动上传
 
 </details>
 
@@ -788,18 +952,37 @@ location /dav {
 
 ```
 CloudPaste/
-├── frontend/                # 前端 Vue.js 应用
-│   ├── src/                 # 源代码
-│   │   ├── components/      # Vue 组件
-│   │   ├── api/             # API 客户端和服务
-│   │   ├── i18n/            # 国际化资源文件
-│   │   ├── utils/           # 工具函数
-│   │   └── assets/          # 静态资源
-│   └── ...
-└── backend/                 # Cloudflare Workers 后端
-    ├── worker.js            # 主要 Worker 文件
-    ├── schema.sql           # D1 数据库模式
-    └── ...
+├── frontend/                    # 前端 Vue.js 应用
+│   ├── src/
+│   │   ├── api/                 # API 客户端和服务层
+│   │   ├── components/          # Vue 组件
+│   │   ├── composables/         # Vue 3 组合式 API
+│   │   ├── stores/              # Pinia 状态管理
+│   │   ├── views/               # 页面视图
+│   │   ├── router/              # Vue Router 配置
+│   │   ├── i18n/                # 国际化资源文件
+│   │   ├── utils/               # 工具函数
+│   │   └── assets/              # 静态资源
+│   └── package.json
+├── backend/                     # Cloudflare Workers 后端
+│   ├── src/
+│   │   ├── routes/              # API 路由层
+│   │   ├── services/            # 业务逻辑层
+│   │   ├── storage/             # 存储抽象层（S3 驱动、挂载点管理）
+│   │   ├── middlewares/         # 中间件层
+│   │   ├── webdav/              # WebDAV 协议实现
+│   │   ├── repositories/        # 数据访问层
+│   │   ├── cache/               # 缓存管理系统
+│   │   ├── constants/           # 常量定义
+│   │   └── utils/               # 工具函数
+│   ├── workers.js                # Cloudflare Workers 入口文件
+│   ├── schema.sql               # D1 数据库架构定义
+│   ├── wrangler.toml            # Cloudflare Workers 配置
+│   └── package.json
+├── docker/                      # Docker 部署配置
+├── Api-doc.md                   # 完整 API 文档
+├── Api-s3_direct.md             # S3 直传 API 文档
+└── README.md                    # 项目说明文档
 ```
 
 ### 自定义 Docker 构建
@@ -878,6 +1061,22 @@ CloudPaste/
 Apache License 2.0
 
 本项目使用 Apache License 2.0 许可证 - 详情请参阅 [LICENSE](LICENSE) 文件。
+
+## ❤️ 贡献
+
+- **赞助**：项目维护不易，喜欢本项目的话，可以作者大大一点小小的鼓励哦，您的每一份支持都是我前进的动力\~
+
+    ![image.png](./images/PayQrcode.png)
+
+  <a href="https://afdian.com/a/drag0n"><img width="200" src="https://pic1.afdiancdn.com/static/img/welcome/button-sponsorme.png" alt=""></a>
+
+  - **赞助者**：非常感谢以下赞助者对本项目的支持！！
+
+    [![赞助者](https://afdian.730888.xyz/image)](https://afdian.com/a/drag0n)
+
+- **Contributors**：感谢以下贡献者对本项目的无私贡献！
+  
+    [![Contributors](https://contrib.rocks/image?repo=ling-drag0n/CloudPaste)](https://github.com/ling-drag0n/CloudPaste/graphs/contributors)
 
 ## Star History
 

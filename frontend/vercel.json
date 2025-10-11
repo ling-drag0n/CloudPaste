@@ -25,6 +25,11 @@
       "continue": true
     },
     {
+      "src": "/dist/(.*)",
+      "headers": { "cache-control": "public, max-age=31536000, immutable" },
+      "continue": true
+    },
+    {
       "src": "/(.*).json",
       "headers": { "cache-control": "public, max-age=3600" },
       "continue": true
@@ -32,6 +37,21 @@
     {
       "src": "/manifest.json",
       "headers": { "cache-control": "public, max-age=3600" },
+      "continue": true
+    },
+    {
+      "src": "/sw.js",
+      "headers": { "cache-control": "no-cache, no-store, must-revalidate" },
+      "continue": true
+    },
+    {
+      "src": "/workbox-*.js",
+      "headers": { "cache-control": "no-cache, no-store, must-revalidate" },
+      "continue": true
+    },
+    {
+      "src": "/icons/(.*)",
+      "headers": { "cache-control": "public, max-age=2592000" },
       "continue": true
     },
     {
@@ -47,6 +67,9 @@
     { "src": "/paste/.*", "dest": "/index.html" },
     { "src": "/file/.*", "dest": "/index.html" },
     { "src": "/admin", "dest": "/index.html" },
+    { "src": "/admin/.*", "dest": "/index.html" },
+    { "src": "/mount-explorer", "dest": "/index.html" },
+    { "src": "/mount-explorer/.*", "dest": "/index.html" },
     { "src": "/upload", "dest": "/index.html" },
     { "src": "/(.*)", "dest": "/index.html" }
   ]

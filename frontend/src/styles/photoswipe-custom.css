@@ -1,0 +1,146 @@
+/**
+ * PhotoSwipe自定义UI元素样式
+ */
+
+/* ===== 自定义按钮 - 完全使用PhotoSwipe原生样式 ===== */
+
+/* ===== 图片信息显示 ===== */
+.pswp__image-info {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.8);
+  color: #fff;
+  padding: 12px 20px;
+  border-radius: 8px;
+  max-width: 80%;
+  text-align: center;
+  backdrop-filter: blur(10px);
+  transition: all 0.3s ease;
+  z-index: 10;
+  /* 与PhotoSwipe原生元素保持一致的隐藏/显示行为 */
+  opacity: 1;
+}
+
+.pswp__image-info-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pswp__image-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: #fff;
+  word-break: break-word;
+  line-height: 1.3;
+}
+
+.pswp__image-details {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.8);
+  font-weight: 400;
+}
+
+/* ===== 旋转动画效果 ===== */
+.pswp__img {
+  /* 为旋转功能添加平滑过渡 */
+  transition: transform 0.3s ease;
+}
+
+/* ===== 响应式设计 ===== */
+@media (max-width: 640px) {
+  .pswp__image-info {
+    bottom: 15px;
+    padding: 10px 16px;
+    max-width: 90%;
+  }
+
+  .pswp__image-name {
+    font-size: 14px;
+  }
+
+  .pswp__image-details {
+    font-size: 12px;
+  }
+}
+
+/* ===== 暗色模式适配 ===== */
+.dark .pswp__image-info {
+  background: rgba(31, 41, 55, 0.9);
+  border: 1px solid rgba(75, 85, 99, 0.3);
+}
+
+/* ===== 可访问性优化 ===== */
+@media (prefers-contrast: high) {
+  .pswp__image-info {
+    background: rgba(0, 0, 0, 0.95);
+    border: 2px solid #fff;
+  }
+}
+
+/* ===== 性能优化 ===== */
+.pswp__image-info {
+  will-change: transform, opacity;
+}
+
+/* ===== 与PhotoSwipe原生控制行为保持一致 ===== */
+
+/* 当控制栏隐藏时，图片信息也隐藏 */
+.pswp--ui-hidden .pswp__image-info {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* 单张图片时的特殊处理 */
+.pswp--one-slide .pswp__image-info {
+  /* 可以根据需要调整单张图片时的显示 */
+}
+
+/* ===== 自定义按钮完全使用PhotoSwipe原生样式 ===== */
+
+/* ===== 确保不干扰PhotoSwipe的手势操作 ===== */
+.pswp__image-info {
+  /* 确保信息显示不会干扰图片的手势操作 */
+  pointer-events: none;
+}
+
+.pswp__image-info * {
+  pointer-events: none;
+}
+
+/* ===== 打印样式 ===== */
+@media print {
+  .pswp__image-info {
+    display: none;
+  }
+}
+
+/* ===== 减少动画模式 ===== */
+@media (prefers-reduced-motion: reduce) {
+  .pswp__img {
+    transition: none;
+  }
+
+  .pswp__image-info {
+    transition: none;
+  }
+}
+
+/* ===== 高分辨率屏幕优化 ===== */
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
+  .pswp__image-info {
+    /* 高分辨率屏幕下的优化 */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+/* ===== 触摸设备优化 ===== */
+@media (hover: none) and (pointer: coarse) {
+  .pswp__image-info {
+    /* 触摸设备上增加底部间距，避免被手势区域遮挡 */
+    bottom: 30px;
+  }
+}

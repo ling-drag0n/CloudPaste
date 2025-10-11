@@ -223,7 +223,7 @@ export async function editorContentToPng(editor, options = {}) {
       // 如果找不到编辑器容器，尝试直接从DOM中查找Vditor相关元素
       // 优先使用预览区域，因为预览区域中的公式已经被渲染
       targetElement =
-          document.querySelector(".vditor-preview") || document.querySelector(".vditor-wysiwyg") || document.querySelector(".vditor-ir") || document.querySelector(".vditor-sv");
+        document.querySelector(".vditor-preview") || document.querySelector(".vditor-wysiwyg") || document.querySelector(".vditor-ir") || document.querySelector(".vditor-sv");
 
       if (!targetElement) {
         throw new Error("无法找到编辑器内容元素");
@@ -602,7 +602,7 @@ async function preprocessMathFormulas(rootElement) {
       console.warn("KaTeX处理过程中出错:", e);
     }
   }
-
+  
   // 通用的延迟，以确保任何动态渲染都有时间完成
   await new Promise((resolve) => setTimeout(resolve, 1000));
 

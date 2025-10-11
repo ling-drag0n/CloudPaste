@@ -1,15 +1,17 @@
 <script setup>
 // PasteViewMain组件 - 主组件，整合各个功能模块
 // 负责协调预览、大纲和编辑功能，管理全局状态和数据流
-import { ref, onMounted, onBeforeUnmount, watch, nextTick, computed } from "vue";
-import { getPaste, getRawPasteUrl } from "../../api/pasteService";
-import { updatePaste } from "../../api/adminService";
+import { ref, computed, onMounted, onBeforeUnmount, watch } from "vue";
+
 import PasteViewPreview from "./PasteViewPreview.vue";
 import PasteViewOutline from "./PasteViewOutline.vue";
 import PasteViewEditor from "./PasteViewEditor.vue";
 import { formatExpiry, debugLog } from "./PasteViewUtils";
-import { api } from "../../api";
+import { isExpired } from "@/utils/timeUtils.js";
+import { api } from "@/api";
 import { ApiStatus } from "../../api/ApiStatus";
+import { copyToClipboard } from "@/utils/clipboard";
+import { useAuthStore } from "@/stores/authStore.js";
 
 // 定义环境变量
 const isDev = import.meta.env.DEV;
@@ -45,12 +47,17 @@ const editContent = ref(""); // 编辑内容
 
 // 视图模式设置
 const viewMode = ref("preview"); // 'preview', 'outline', 'edit'
-// 管理员权限判断
-const isAdmin = ref(false);
-// API密钥用户权限判断
-const hasApiKey = ref(false);
-const hasTextPermission = ref(false);
-const isCreator = ref(false);
+// 纯文本模式标志 - 控制是否显示为纯文本而非渲染的Markdown
+const isPlainTextMode = ref(false);
+
+// 使用认证Store
+const authStore = useAuthStore();
+
+// 从Store获取权限状态的计算属性
+const isAdmin = computed(() => authStore.isAdmin);
+const hasApiKey = computed(() => authStore.authType === "apikey" && !!authStore.apiKey);
+const hasTextPermission = computed(() => authStore.hasTextPermission);
+const isCreator = ref(false); // 这个需要根据具体文本分享的创建者信息判断
 // 大纲相关数据
 const outlineData = ref([]); // 扁平结构大纲数据
 const outlineTreeData = ref([]); // 树形结构大纲数据
@@ -58,55 +65,13 @@ const outlineTreeData = ref([]); // 树形结构大纲数据
 // 标记是否通过取消按钮退出编辑模式
 const isCancelling = ref(false);
 
-// 检查是否是管理员 - 通过localStorage中的令牌判断
-const checkAdminStatus = () => {
-  // 从 localStorage 检查是否有管理员令牌
-  const adminToken = localStorage.getItem("admin_token");
-  isAdmin.value = !!adminToken;
-  debugLog(enableDebug.value, isDev, "管理员状态检查:", isAdmin.value ? "是管理员" : "非管理员");
-  return isAdmin.value;
-};
+// 权限检查逻辑已移至认证Store，这里只需要检查创建者状态
 
-// 检查API密钥用户权限状态
-const checkApiKeyStatus = () => {
-  // 检查API密钥
-  const apiKey = localStorage.getItem("api_key");
-  hasApiKey.value = !!apiKey;
-
-  // 检查文本权限
-  if (hasApiKey.value) {
-    try {
-      const permissionsStr = localStorage.getItem("api_key_permissions");
-      if (permissionsStr) {
-        const permissions = JSON.parse(permissionsStr);
-        hasTextPermission.value = !!permissions.text;
-        debugLog(enableDebug.value, isDev, "API密钥文本权限:", hasTextPermission.value ? "有权限" : "无权限");
-      } else {
-        console.warn("未找到API密钥权限信息，尝试获取");
-        // 如果没有权限信息，我们可以从API密钥信息中推断
-        const apiKeyInfo = localStorage.getItem("api_key_info");
-        if (apiKeyInfo) {
-          try {
-            const keyInfo = JSON.parse(apiKeyInfo);
-            if (keyInfo.permissions && keyInfo.permissions.text) {
-              hasTextPermission.value = true;
-              debugLog(enableDebug.value, isDev, "从api_key_info推断文本权限: 有权限");
-            }
-          } catch (e) {
-            console.error("解析API密钥信息失败:", e);
-          }
-        }
-      }
-    } catch (e) {
-      console.error("解析API密钥权限失败:", e);
-      hasTextPermission.value = false;
-    }
-  }
-
+// 检查创建者状态
+const checkCreatorStatus = () => {
   // 检查是否是创建者 - 如果文本分享已加载
   if (paste.value && hasApiKey.value) {
     try {
-      // 移除冗余日志
       debugLog(enableDebug.value, isDev, "检查API密钥用户是否为创建者，文本created_by:", paste.value.created_by);
 
       if (!paste.value.created_by) {
@@ -115,12 +80,9 @@ const checkApiKeyStatus = () => {
         return;
       }
 
-      // 从localStorage获取API密钥信息
-      // 方法1: 获取api_key_info
-      const apiKeyInfo = localStorage.getItem("api_key_info");
-      if (apiKeyInfo) {
-        // 解析API密钥信息
-        const keyInfo = JSON.parse(apiKeyInfo);
+      // 从认证Store获取API密钥信息
+      const keyInfo = authStore.apiKeyInfo;
+      if (keyInfo) {
         debugLog(enableDebug.value, isDev, "API密钥信息:", keyInfo);
 
         // 处理created_by字段，后端返回的格式是"apikey:密钥ID"
@@ -139,12 +101,10 @@ const checkApiKeyStatus = () => {
         return;
       }
 
-      // 方法2: 如果没有api_key_info，尝试使用api_key
-      const apiKey = localStorage.getItem("api_key");
-      if (apiKey && hasTextPermission.value) {
+      // 如果没有密钥信息，但有文本权限，放宽条件
+      if (hasTextPermission.value) {
         debugLog(enableDebug.value, isDev, "尝试使用API密钥直接验证创建者身份");
 
-        // 由于无法确定确切ID，我们放宽条件，允许任何有文本权限的API密钥用户编辑以apikey:开头的内容
         const createdBy = paste.value.created_by;
         if (typeof createdBy === "string" && createdBy.startsWith("apikey:")) {
           // 没有足够信息时，简单假设有权限的API密钥用户可以编辑API密钥创建的内容
@@ -192,7 +152,7 @@ const loadPaste = async (password = null) => {
   try {
     debugLog(enableDebug.value, isDev, "PasteView: 开始加载内容", props.slug);
     // 调用API获取文本分享数据
-    const result = await getPaste(props.slug, password);
+    const result = await api.paste.getPaste(props.slug, password);
     paste.value = result;
 
     // 检查返回的完整数据用于调试
@@ -219,11 +179,14 @@ const loadPaste = async (password = null) => {
     // 保存编辑内容原始值，用于编辑模式
     editContent.value = result.content || "";
 
-    // 检查用户权限状态
-    checkAdminStatus();
+    // 如果需要重新验证认证状态，则进行验证
+    if (authStore.needsRevalidation) {
+      console.log("PasteViewMain: 需要重新验证认证状态");
+      await authStore.validateAuth();
+    }
 
     // 由于文本加载完成，此时可以正确检查创建者状态
-    checkApiKeyStatus();
+    checkCreatorStatus();
   } catch (err) {
     console.error("获取文本分享失败:", err);
     // 优先使用HTTP状态码判断错误类型，更可靠
@@ -266,6 +229,9 @@ const loadPaste = async (password = null) => {
 // 提取文档大纲 - 由预览组件渲染完成后调用
 // 分析DOM结构生成大纲数据
 const extractOutline = () => {
+  // 使用更安全的DOM查询，避免在组件卸载时出错
+  if (!mounted) return;
+
   const previewElement = document.querySelector(".vditor-reset");
   if (!previewElement) return;
 
@@ -387,22 +353,16 @@ const saveEdit = async (updateData) => {
     // 检查是否修改了密码
     const passwordChanged = updateData.password || updateData.clearPassword;
 
-    // 根据用户类型调用不同的API更新内容
-    if (isAdmin.value) {
-      // 管理员使用admin API
-      await updatePaste(slug, updateData);
-    } else if (hasApiKey.value && hasTextPermission.value && isCreator.value) {
-      // API密钥用户使用user API
-      await api.user.paste.updatePaste(slug, updateData);
-    }
+    // 使用统一API更新内容（自动根据认证信息处理权限）
+    await api.paste.updatePaste(slug, updateData);
 
     // 更新本地内容状态
     paste.value.content = updateData.content;
     // 保存成功后，更新编辑内容的原始值，这样取消按钮可以恢复到最新保存的内容
     editContent.value = updateData.content;
     paste.value.remark = updateData.remark;
-    paste.value.maxViews = updateData.maxViews;
-    paste.value.expiresAt = updateData.expiresAt;
+    paste.value.max_views = updateData.max_views;
+    paste.value.expires_at = updateData.expires_at;
 
     // 切换回预览模式
     switchViewMode("preview");
@@ -465,51 +425,31 @@ const submitPassword = async () => {
 };
 
 // 复制内容到剪贴板 - 提供两种实现方式以确保兼容性
-const copyContentToClipboard = () => {
+const copyContentToClipboard = async () => {
   if (!paste.value || !paste.value.content) {
     error.value = "没有可复制的内容";
     return;
   }
 
   try {
-    // 优先使用现代Clipboard API
-    navigator.clipboard
-      .writeText(paste.value.content)
-      .then(() => {
-        error.value = "复制成功：内容已复制到剪贴板";
-        setTimeout(() => {
-          error.value = "";
-        }, 3000);
-      })
-      .catch((err) => {
-        console.error("复制失败:", err);
-        error.value = "复制失败，请手动选择内容复制";
-      });
-  } catch (e) {
-    console.error("复制API不可用:", e);
-    // 降级方案：创建临时文本区域
-    const textarea = document.createElement("textarea");
-    textarea.value = paste.value.content;
-    textarea.style.position = "fixed";
-    textarea.style.opacity = "0";
-    document.body.appendChild(textarea);
-    textarea.select();
-    try {
-      document.execCommand("copy");
+    const success = await copyToClipboard(paste.value.content);
+
+    if (success) {
       error.value = "复制成功：内容已复制到剪贴板";
       setTimeout(() => {
         error.value = "";
       }, 3000);
-    } catch (err) {
-      console.error("复制失败:", err);
-      error.value = "复制失败，请手动选择内容复制";
+    } else {
+      throw new Error("复制失败");
     }
-    document.body.removeChild(textarea);
+  } catch (e) {
+    console.error("复制失败:", e);
+    error.value = "复制失败，请手动选择内容复制";
   }
 };
 
 // 复制原始文本链接到剪贴板
-const copyRawLink = () => {
+const copyRawLink = async () => {
   if (!paste.value || !paste.value.slug) {
     error.value = "没有可复制的原始链接";
     return;
@@ -517,24 +457,22 @@ const copyRawLink = () => {
 
   try {
     // 从getRawPasteUrl获取原始链接
-    const rawLink = getRawPasteUrl(paste.value.slug, paste.value.plain_password || null);
+    const rawLink = api.paste.getRawPasteUrl(paste.value.slug, paste.value.plain_password || null);
 
     // 复制链接到剪贴板
-    navigator.clipboard
-      .writeText(rawLink)
-      .then(() => {
-        error.value = "复制成功：原始链接已复制到剪贴板";
-        setTimeout(() => {
-          error.value = "";
-        }, 3000);
-      })
-      .catch((err) => {
-        console.error("复制失败:", err);
-        error.value = "复制原始链接失败，请手动复制";
-      });
+    const success = await copyToClipboard(rawLink);
+
+    if (success) {
+      error.value = "复制成功：原始链接已复制到剪贴板";
+      setTimeout(() => {
+        error.value = "";
+      }, 3000);
+    } else {
+      throw new Error("复制失败");
+    }
   } catch (e) {
-    console.error("复制原始链接失败:", e);
-    error.value = "复制原始链接失败，请手动复制";
+    console.error("复制失败:", e);
+    error.value = "复制失败，请手动复制原始链接";
   }
 };
 
@@ -557,22 +495,19 @@ const togglePasswordVisibility = () => {
   showPassword.value = !showPassword.value;
 };
 
+// 切换纯文本/Markdown渲染模式
+const toggleTextMode = (isPlainText) => {
+  isPlainTextMode.value = isPlainText;
+  debugLog(enableDebug.value, isDev, isPlainText ? "切换到TXT模式" : "切换到MD渲染模式");
+};
+
 // 组件挂载时加载文本分享
 onMounted(async () => {
   debugLog(enableDebug.value, isDev, "PasteView: 组件挂载", props.slug);
   mounted = true;
 
-  // 检查是否为管理员
-  checkAdminStatus();
-
-  // 确保API密钥信息已加载
-  await ensureApiKeyInfoLoaded();
-
-  // 检查API密钥状态（会在loadPaste后进一步更新创建者状态）
-  checkApiKeyStatus();
-
-  // 添加localStorage监听
-  window.addEventListener("storage", handleStorageChange);
+  // 监听认证状态变化事件
+  window.addEventListener("auth-state-changed", handleAuthStateChange);
 
   // 延迟加载以确保DOM已准备就绪
   setTimeout(async () => {
@@ -580,29 +515,11 @@ onMounted(async () => {
   }, 150);
 });
 
-// 确保API密钥信息已加载
-const ensureApiKeyInfoLoaded = async () => {
-  // 如果是API密钥用户但localStorage中没有api_key_info
-  const apiKey = localStorage.getItem("api_key");
-  if (apiKey && !localStorage.getItem("api_key_info")) {
-    debugLog(enableDebug.value, isDev, "检测到API密钥但没有密钥信息，尝试获取");
-    try {
-      // 导入辅助工具
-      const { getApiKeyInfo } = await import("../../utils/auth-helper.js");
-
-      // 尝试获取API密钥信息
-      const keyInfo = await getApiKeyInfo();
-      debugLog(enableDebug.value, isDev, "获取API密钥信息成功");
-
-      // 如果没有权限信息，设置权限信息
-      if (!localStorage.getItem("api_key_permissions") && keyInfo && keyInfo.permissions) {
-        localStorage.setItem("api_key_permissions", JSON.stringify(keyInfo.permissions));
-        debugLog(enableDebug.value, isDev, "已保存API密钥权限信息");
-      }
-    } catch (err) {
-      console.error("验证API密钥出错:", err);
-    }
-  }
+// 处理认证状态变化
+const handleAuthStateChange = (event) => {
+  debugLog(enableDebug.value, isDev, "PasteViewMain: 认证状态变化", event.detail);
+  // 重新检查创建者状态
+  checkCreatorStatus();
 };
 
 // 组件卸载时清理资源
@@ -611,21 +528,12 @@ onBeforeUnmount(() => {
   mounted = false;
   paste.value = null;
   // 移除事件监听
-  window.removeEventListener("storage", handleStorageChange);
+  window.removeEventListener("auth-state-changed", handleAuthStateChange);
 });
-
-// 处理localStorage变化
-const handleStorageChange = (e) => {
-  if (e.key === "admin_token" || e.key === "api_key" || e.key === "api_key_permissions" || e.key === "api_key_info") {
-    debugLog(enableDebug.value, isDev, "检测到存储变化，更新权限状态:", e.key);
-    checkAdminStatus();
-    checkApiKeyStatus();
-  }
-};
 </script>
 
 <template>
-  <div class="paste-view max-w-6xl mx-auto px-4 sm:px-6 flex-1 flex flex-col">
+  <div class="paste-view max-w-6xl mx-auto px-3 sm:px-6 flex-1 flex flex-col pt-6 sm:pt-8">
     <div class="mb-6">
       <!-- 将原来的大标题替换为更简洁的面包屑样式导航 -->
       <div class="py-3 text-sm text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700 mb-4">
@@ -674,6 +582,7 @@ const handleStorageChange = (e) => {
               <input
                 :type="showPassword ? 'text' : 'password'"
                 id="password"
+                autocomplete="current-password"
                 v-model="passwordInput"
                 @keyup.enter="submitPassword"
                 class="block w-full px-3 py-2 rounded-md shadow-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 password-input"
@@ -728,23 +637,21 @@ const handleStorageChange = (e) => {
         <!-- 元信息显示区域 - 显示过期时间和剩余查看次数 -->
         <div class="mb-6 p-5 border rounded-lg" :class="darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'">
           <div class="grid grid-cols-1 gap-4 text-sm">
-            <div v-if="paste.expiresAt">
+            <div v-if="paste.expires_at">
               <span :class="darkMode ? 'text-gray-400' : 'text-gray-500'">过期时间:</span>
-              <span class="ml-2" :class="[darkMode ? 'text-white' : 'text-gray-900', new Date(paste.expiresAt) < new Date() ? 'text-red-500' : '']">{{
-                formatExpiry(paste.expiresAt)
-              }}</span>
+              <span class="ml-2" :class="[darkMode ? 'text-white' : 'text-gray-900', isExpired(paste.expires_at) ? 'text-red-500' : '']">{{ formatExpiry(paste.expires_at) }}</span>
             </div>
-            <div v-if="paste.maxViews">
+            <div v-if="paste.max_views">
               <span :class="darkMode ? 'text-gray-400' : 'text-gray-500'">剩余查看次数:</span>
               <span
                 class="ml-2"
                 :class="[
                   darkMode ? 'text-white' : 'text-gray-900',
-                  paste.maxViews - paste.views <= 5 ? 'text-amber-500' : '',
-                  paste.maxViews - paste.views <= 1 ? 'text-red-500' : '',
+                  paste.max_views - paste.views <= 5 ? 'text-amber-500' : '',
+                  paste.max_views - paste.views <= 1 ? 'text-red-500' : '',
                 ]"
               >
-                {{ paste.maxViews - paste.views }}
+                {{ paste.max_views - paste.views }}
               </span>
             </div>
           </div>
@@ -783,6 +690,37 @@ const handleStorageChange = (e) => {
               ]"
             >
               大纲
+            </button>
+            <!-- 纯文本/Markdown切换按钮组 -->
+            <button
+              @click="toggleTextMode(false)"
+              class="px-3 py-1.5 text-sm font-medium"
+              :class="[
+                !isPlainTextMode
+                  ? darkMode
+                    ? 'bg-gray-700 text-white'
+                    : 'bg-gray-100 text-gray-900'
+                  : darkMode
+                  ? 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                  : 'bg-white text-gray-700 hover:bg-gray-50',
+              ]"
+            >
+              MD
+            </button>
+            <button
+              @click="toggleTextMode(true)"
+              class="px-3 py-1.5 text-sm font-medium"
+              :class="[
+                isPlainTextMode
+                  ? darkMode
+                    ? 'bg-gray-700 text-white'
+                    : 'bg-gray-100 text-gray-900'
+                  : darkMode
+                  ? 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                  : 'bg-white text-gray-700 hover:bg-gray-50',
+              ]"
+            >
+              TXT
             </button>
           </div>
           <!-- 编辑模式下显示固定标题 -->
@@ -854,6 +792,7 @@ const handleStorageChange = (e) => {
               <div>是否为创建者: {{ isCreator ? "是" : "否" }}</div>
               <div>强制显示编辑按钮: {{ forceShowEditButton ? "是" : "否" }}</div>
               <div>当前模式: {{ viewMode }}</div>
+              <div>显示格式: {{ isPlainTextMode ? "TXT模式" : "MD渲染模式" }}</div>
               <div>内容前20字符: {{ paste.content?.substring(0, 20) }}...</div>
               <div>创建者信息: {{ paste.created_by || "无" }}</div>
             </div>
@@ -864,7 +803,15 @@ const handleStorageChange = (e) => {
         <div class="border rounded-lg shadow-sm overflow-hidden" :class="darkMode ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-gray-200 text-gray-900'">
           <!-- 常规预览模式 - 显示Markdown渲染结果 -->
           <div v-if="viewMode === 'preview'" class="p-6">
-            <PasteViewPreview ref="previewRef" :dark-mode="darkMode" :content="paste.content" :is-dev="isDev" :enable-debug="enableDebug" @rendered="handlePreviewRendered" />
+            <PasteViewPreview
+              ref="previewRef"
+              :dark-mode="darkMode"
+              :content="paste.content"
+              :is-dev="isDev"
+              :enable-debug="enableDebug"
+              :is-plain-text-mode="isPlainTextMode"
+              @rendered="handlePreviewRendered"
+            />
           </div>
 
           <!-- 大纲预览模式 - 左侧显示大纲，右侧显示内容 -->
@@ -880,7 +827,14 @@ const handleStorageChange = (e) => {
             >
               <template #content>
                 <div class="content-scroll flex-1 p-4 overflow-y-auto md:absolute md:inset-0">
-                  <PasteViewPreview :dark-mode="darkMode" :content="paste.content" :is-dev="isDev" :enable-debug="enableDebug" @rendered="handlePreviewRendered" />
+                  <PasteViewPreview
+                    :dark-mode="darkMode"
+                    :content="paste.content"
+                    :is-dev="isDev"
+                    :enable-debug="enableDebug"
+                    :is-plain-text-mode="isPlainTextMode"
+                    @rendered="handlePreviewRendered"
+                  />
                 </div>
               </template>
             </PasteViewOutline>

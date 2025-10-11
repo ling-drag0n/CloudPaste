@@ -2,10 +2,13 @@
  * 处理WebDAV DELETE请求
  * 用于删除文件或目录
  */
-import { findMountPointByPath, normalizeS3SubPath, updateMountLastUsed, checkDirectoryExists } from "../utils/webdavUtils.js";
-import { createS3Client } from "../../utils/s3Utils.js";
-import { DeleteObjectCommand, ListObjectsV2Command, HeadObjectCommand } from "@aws-sdk/client-s3";
-import { clearCacheAfterWebDAVOperation } from "../utils/cacheUtils.js";
+import { MountManager } from "../../storage/managers/MountManager.js";
+import { FileSystem } from "../../storage/fs/FileSystem.js";
+import { handleWebDAVError, createWebDAVErrorResponse } from "../utils/errorUtils.js";
+import { getStandardWebDAVHeaders } from "../utils/headerUtils.js";
+import { clearDirectoryCache } from "../../cache/index.js";
+import { lockManager } from "../utils/LockManager.js";
+import { checkLockPermission } from "../utils/lockUtils.js";
 
 /**
  * 处理DELETE请求
@@ -17,135 +20,86 @@ import { clearCacheAfterWebDAVOperation } from "../utils/cacheUtils.js";
  */
 export async function handleDelete(c, path, userId, userType, db) {
   try {
-    // 使用统一函数查找挂载点
-    const mountResult = await findMountPointByPath(db, path, userId, userType);
-
-    // 处理错误情况
-    if (mountResult.error) {
-      return new Response(mountResult.error.message, {
-        status: mountResult.error.status,
-        headers: { "Content-Type": "text/plain" },
+    // 检查锁定状态
+    const ifHeader = c.req.header("If");
+    const lockConflict = checkLockPermission(lockManager, path, ifHeader, "DELETE");
+    if (lockConflict) {
+      console.log(`WebDAV DELETE - 锁定冲突: ${path}`);
+      return new Response(lockConflict.message, {
+        status: lockConflict.status,
+        headers: getStandardWebDAVHeaders({
+          customHeaders: { "Content-Type": "text/plain" },
+        }),
       });
     }
-
-    const { mount, subPath } = mountResult;
 
     // 提取挂载点路径部分和子路径部分
     const pathParts = path.split("/").filter((p) => p);
 
-    // 不允许删除挂载点根目录
+    // 不允许删除挂载点根目录（保持原有业务逻辑保护）
     if (pathParts.length === 1) {
       return new Response("不能删除挂载点根目录", {
         status: 405, // Method Not Allowed
-        headers: { "Content-Type": "text/plain" },
+        headers: getStandardWebDAVHeaders({
+          customHeaders: { "Content-Type": "text/plain" },
+        }),
       });
     }
 
-    // 获取挂载点对应的S3配置
-    const s3Config = await db.prepare("SELECT * FROM s3_configs WHERE id = ?").bind(mount.storage_config_id).first();
+    // 创建FileSystem实例
+    const mountManager = new MountManager(db, c.env.ENCRYPTION_SECRET);
+    const fileSystem = new FileSystem(mountManager);
 
-    if (!s3Config) {
-      return new Response("存储配置不存在", { status: 404 });
+    console.log(`WebDAV DELETE - 开始删除路径: ${path}, 用户类型: ${userType}`);
+
+    // 使用FileSystem统一抽象层删除文件或目录
+    // batchRemoveItems会自动处理文件和目录的删除，包括递归删除目录
+    const result = await fileSystem.batchRemoveItems([path], userId, userType);
+
+    console.log(`WebDAV DELETE - 删除结果: 成功=${result.success}, 失败=${result.failed?.length || 0}`);
+
+    // 处理删除结果
+    if (result.failed && result.failed.length > 0) {
+      const failedItem = result.failed[0];
+      console.warn(`WebDAV DELETE - 删除失败: ${failedItem.path} - ${failedItem.error}`);
+
+      // 根据错误类型返回适当的HTTP状态码
+      if (failedItem.error.includes("不存在") || failedItem.error.includes("not found")) {
+        return createWebDAVErrorResponse("文件或目录不存在", 404, false);
+      } else if (failedItem.error.includes("权限") || failedItem.error.includes("permission")) {
+        return createWebDAVErrorResponse("权限不足", 403, false);
+      } else {
+        return createWebDAVErrorResponse(failedItem.error, 500, false);
+      }
     }
 
-    // 创建S3客户端
-    const s3Client = await createS3Client(s3Config, c.env.ENCRYPTION_SECRET);
-
-    // 判断是否为目录路径（以斜杠结尾）
-    const isDirectory = path.endsWith("/");
-
-    // 规范化S3子路径
-    const s3SubPath = normalizeS3SubPath(subPath, s3Config, isDirectory);
-
-    if (isDirectory) {
-      // 目录删除 - 需要先列出目录中的所有对象
-      // 先检查目录是否存在
-      const dirExists = await checkDirectoryExists(s3Client, s3Config.bucket_name, s3SubPath);
-
-      if (!dirExists) {
-        return new Response("目录不存在", { status: 404 });
+    // 手动缓存清理（因为FileSystem不处理WebDAV特定的缓存）
+    try {
+      const { mount } = await mountManager.getDriverByPath(path, userId, userType);
+      if (mount) {
+        await clearDirectoryCache({ mountId: mount.id });
+        console.log(`WebDAV DELETE - 已清理挂载点 ${mount.id} 的缓存`);
       }
-
-      // 列出目录中的所有对象
-      const listParams = {
-        Bucket: s3Config.bucket_name,
-        Prefix: s3SubPath,
-      };
-
-      const listCommand = new ListObjectsV2Command(listParams);
-      const listResponse = await s3Client.send(listCommand);
-
-      // 删除目录下所有对象
-      if (listResponse.Contents && listResponse.Contents.length > 0) {
-        for (const item of listResponse.Contents) {
-          const deleteParams = {
-            Bucket: s3Config.bucket_name,
-            Key: item.Key,
-          };
-
-          const deleteCommand = new DeleteObjectCommand(deleteParams);
-          await s3Client.send(deleteCommand);
-        }
-      }
-
-      // 清理缓存 - 对于目录操作，应清理该目录的缓存
-      await clearCacheAfterWebDAVOperation(db, s3SubPath, s3Config, true);
-    } else {
-      // 文件删除 - 检查文件是否存在
-      try {
-        const headParams = {
-          Bucket: s3Config.bucket_name,
-          Key: s3SubPath,
-        };
-
-        const headCommand = new HeadObjectCommand(headParams);
-        await s3Client.send(headCommand);
-      } catch (error) {
-        if (error.$metadata && error.$metadata.httpStatusCode === 404) {
-          return new Response("文件不存在", { status: 404 });
-        }
-        throw error;
-      }
-
-      // 删除文件
-      const deleteParams = {
-        Bucket: s3Config.bucket_name,
-        Key: s3SubPath,
-      };
-
-      const deleteCommand = new DeleteObjectCommand(deleteParams);
-      await s3Client.send(deleteCommand);
-
-      // 清理缓存 - 对于文件操作，应清理文件所在目录的缓存
-      await clearCacheAfterWebDAVOperation(db, s3SubPath, s3Config, false);
+    } catch (cacheError) {
+      // 缓存清理失败不应该影响删除操作的成功响应
+      console.warn(`WebDAV DELETE - 缓存清理失败: ${cacheError.message}`);
     }
 
-    // 更新挂载点的最后使用时间
-    await updateMountLastUsed(db, mount.id);
+    console.log(`WebDAV DELETE - 删除成功: ${path}`);
 
-    // 返回成功响应
+    // 返回成功响应（符合WebDAV DELETE标准）
     return new Response(null, {
       status: 204, // No Content
-      headers: {
-        "Content-Type": "text/plain",
-        "Content-Length": "0",
-      },
+      headers: getStandardWebDAVHeaders({
+        customHeaders: {
+          "Content-Type": "text/plain",
+          "Content-Length": "0",
+        },
+      }),
     });
   } catch (error) {
-    console.error("DELETE请求处理错误:", error);
-    // 特殊处理404错误
-    if (error.$metadata && error.$metadata.httpStatusCode === 404) {
-      return new Response("文件或目录不存在", { status: 404 });
-    }
-
-    // 生成唯一错误ID用于日志追踪
-    const errorId = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
-    console.error(`DELETE错误详情[${errorId}]:`, error);
-
-    // 对外部仅返回通用错误信息和错误ID，不暴露具体错误
-    return new Response(`内部服务器错误 (错误ID: ${errorId})`, {
-      status: 500,
-      headers: { "Content-Type": "text/plain" },
-    });
+    console.error(`WebDAV DELETE - 处理错误: ${error.message}`, error);
+    // 使用统一的WebDAV错误处理
+    return handleWebDAVError("DELETE", error, false, false);
   }
 }

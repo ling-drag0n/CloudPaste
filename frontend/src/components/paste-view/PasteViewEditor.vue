@@ -1,1007 +1,103 @@
-<script setup>
-// PasteViewEditor组件 - 提供Markdown编辑及相关配置功能
-// 该组件使用Vditor作为编辑器，允许用户修改内容并设置过期时间等元数据
-import { ref, onMounted, watch, onBeforeUnmount } from "vue";
-import Vditor from "vditor";
-import "vditor/dist/index.css";
-import { getInputClasses, debugLog } from "./PasteViewUtils";
-// 导入Word导出服务
-import markdownToWord from "../../utils/markdownToWord";
-// 导入FileSaver用于下载文件
-import { saveAs } from "file-saver";
-// 导入HTML转图片工具
-import htmlToImage from "../../utils/htmlToImage";
-
-// 定义组件接收的属性
-const props = defineProps({
-  // 是否为暗色模式，控制编辑器主题
-  darkMode: {
-    type: Boolean,
-    required: true,
-  },
-  // 要编辑的Markdown内容
-  content: {
-    type: String,
-    default: "",
-  },
-  // 文本分享对象，包含元数据
-  paste: {
-    type: Object,
-    default: () => ({}),
-  },
-  // 是否处于加载状态
-  loading: {
-    type: Boolean,
-    default: false,
-  },
-  // 错误信息
-  error: {
-    type: String,
-    default: "",
-  },
-  // 是否为开发环境
-  isDev: {
-    type: Boolean,
-    default: false,
-  },
-  // 是否启用调试日志
-  enableDebug: {
-    type: Boolean,
-    default: false,
-  },
-});
-
-// 定义组件可触发的事件
-const emit = defineEmits(["save", "cancel", "update:error"]);
-
-// 编辑器实例引用
-const vditorInstance = ref(null);
-// 编辑表单数据，包含元数据设置
-const editForm = ref({
-  remark: props.paste?.remark || "",
-  customLink: props.paste?.slug || "",
-  expiryTime: "24", // 默认为1天
-  maxViews: props.paste?.maxViews || 0,
-  password: "", // 新增密码字段
-  clearPassword: false, // 新增是否清除密码的标志
-});
-
-// 密码可见性控制
-const showPassword = ref(false);
-
-// 复制为其他格式功能逻辑
-const copyFormatMenuVisible = ref(false);
-const copyFormatMenuPosition = ref({ x: 0, y: 0 });
-// 成功通知消息
-const notification = ref("");
-// 存储最后一次使用的按钮元素引用，用于重新定位菜单
-const lastCopyFormatsBtnElement = ref(null);
-// 添加markdownImporter的ref引用
-const markdownImporter = ref(null);
-
-// 切换密码可见性
-const togglePasswordVisibility = () => {
-  showPassword.value = !showPassword.value;
-};
-
-// 监听paste对象变化，更新表单数据
-watch(
-    () => props.paste,
-    (newPaste) => {
-      if (newPaste) {
-        // 初始化编辑表单数据
-        editForm.value.remark = newPaste.remark || "";
-        editForm.value.customLink = newPaste.slug || "";
-        // 密码字段重置为空字符串
-        editForm.value.password = "";
-        editForm.value.clearPassword = false;
-
-        // 处理过期时间 - 将ISO日期转换为选择项值
-        if (newPaste.expiresAt) {
-          const expiryDate = new Date(newPaste.expiresAt);
-          const now = new Date();
-          const diffHours = Math.round((expiryDate - now) / (1000 * 60 * 60));
-
-          // 根据剩余时间选择最接近的预设选项
-          if (diffHours <= 1) {
-            editForm.value.expiryTime = "1";
-          } else if (diffHours <= 24) {
-            editForm.value.expiryTime = "24";
-          } else if (diffHours <= 168) {
-            editForm.value.expiryTime = "168";
-          } else if (diffHours <= 720) {
-            editForm.value.expiryTime = "720";
-          } else {
-            editForm.value.expiryTime = "0"; // 设置为永不过期
-          }
-        } else {
-          editForm.value.expiryTime = "0"; // 永不过期
-        }
-
-        // 最大查看次数
-        editForm.value.maxViews = newPaste.maxViews || 0;
-      }
-    },
-    { immediate: true }
-);
-
-// 初始化Vditor编辑器，配置主题、工具栏等选项
-const initEditor = () => {
-  if (vditorInstance.value) return;
-
-  const editorElement = document.getElementById("vditor-editor");
-  if (!editorElement) {
-    console.error("编辑器元素不存在");
-    return;
-  }
-
-  // 创建并配置Vditor实例
-  vditorInstance.value = new Vditor("vditor-editor", {
-    height: 500,
-    minHeight: 400,
-    value: props.content, // 设置初始内容
-    theme: props.darkMode ? "dark" : "classic", // 根据主题设置
-    mode: "ir", // 即时渲染模式，兼顾编辑体验和所见即所得
-    cdn: "https://fastly.jsdelivr.net/npm/vditor@3.11.0", // 添加CDN配置，确保资源正确加载
-    resize: {
-      enable: true,
-      position: "bottom", // 只允许底部拖动
-    },
-    preview: {
-      theme: {
-        current: props.darkMode ? "dark" : "light",
-      },
-      hljs: {
-        style: props.darkMode ? "vs2015" : "github",
-        lineNumber: true,
-      },
-      actions: ["desktop", "tablet", "mobile", "both"],
-      markdown: {
-        toc: true, // 启用目录
-        mark: true, // 启用标记
-        footnotes: true, // 启用脚注
-        autoSpace: true, // 自动空格
-        media: true, // 启用媒体链接解析
-        listStyle: true, // 确保开启列表样式
-        task: true, // 启用任务列表交互
-        paragraphBeginningSpace: true, // 段落开头空格支持
-        fixTermTypo: true, // 术语修正
-        // 图表渲染相关配置
-        mermaid: {
-          theme: "default", // 使用固定的主题，不跟随暗色模式变化
-          useMaxWidth: false, // 不使用最大宽度限制
-        },
-        flowchart: {
-          theme: "default", // 使用固定的主题
-        },
-        // 固定图表样式
-        fixDiagramTheme: true, // 自定义属性，用于CSS选择器中识别
-      },
-      math: {
-        engine: "KaTeX", // 数学公式引擎
-        inlineDigit: true,
-      },
-    },
-    typewriterMode: true, // 启用打字机模式，光标总在屏幕中间
-    outline: {
-      enable: false, // 默认关闭大纲，避免与自定义大纲冲突
-      position: "left",
-    },
-    counter: {
-      enable: true, // 启用计数器
-      type: "text", // 文本类型计数
-    },
-    tab: "\t", // 按Tab键时插入制表符而非缩进
-    indent: {
-      tab: "\t", // 使用制表符进行缩进
-      codeBlock: 4, // 代码块的缩进为4个空格
-    },
-    hint: {
-      emoji: {
-        // 表情符号 - 基本表情
-        slight_smile: "🙂",
-        smile: "😊",
-        joy: "😂",
-        rofl: "🤣",
-        laughing: "😆",
-        wink: "😉",
-        blush: "😊",
-        heart_eyes: "😍",
-        kissing_heart: "😘",
-        kissing: "😗",
-        kissing_smiling_eyes: "😙",
-        kissing_closed_eyes: "😚",
-        yum: "😋",
-        stuck_out_tongue: "😛",
-        stuck_out_tongue_winking_eye: "😜",
-        stuck_out_tongue_closed_eyes: "😝",
-        grin: "😁",
-        satisfied: "😌",
-        sweat_smile: "😅",
-
-        // 情绪表情
-        thinking: "🤔",
-        confused: "😕",
-        worried: "😟",
-        frowning: "😦",
-        persevere: "😣",
-        confounded: "😖",
-        tired_face: "😫",
-        weary: "😩",
-        cry: "😢",
-        sob: "😭",
-        angry: "😠",
-        rage: "😡",
-        triumph: "😤",
-        sleepy: "😪",
-        yawning: "🥱",
-        mask: "😷",
-        sunglasses: "😎",
-        dizzy_face: "😵",
-        exploding_head: "🤯",
-        flushed: "😳",
-
-        // 手势表情
-        thumbsup: "👍",
-        thumbsdown: "👎",
-        ok_hand: "👌",
-        punch: "👊",
-        fist: "✊",
-        v: "✌️",
-        wave: "👋",
-        raised_hand: "✋",
-        clap: "👏",
-        muscle: "💪",
-        pray: "🙏",
-        point_up: "☝️",
-        point_down: "👇",
-        point_left: "👈",
-        point_right: "👉",
-
-        // 心形表情
-        heart: "❤️",
-        orange_heart: "🧡",
-        yellow_heart: "💛",
-        green_heart: "💚",
-        blue_heart: "💙",
-        purple_heart: "💜",
-        black_heart: "🖤",
-        broken_heart: "💔",
-        sparkling_heart: "💖",
-        heartbeat: "💓",
-        heartpulse: "💗",
-
-        // 动物表情
-        dog: "🐶",
-        cat: "🐱",
-        mouse: "🐭",
-        hamster: "🐹",
-        rabbit: "🐰",
-        fox: "🦊",
-        bear: "🐻",
-        panda: "🐼",
-        koala: "🐨",
-        tiger: "🐯",
-        lion: "🦁",
-
-        // 食物表情
-        apple: "🍎",
-        pizza: "🍕",
-        hamburger: "🍔",
-        fries: "🍟",
-        sushi: "🍣",
-        ramen: "🍜",
-        doughnut: "🍩",
-        cake: "🍰",
-        coffee: "☕",
-        beer: "🍺",
-
-        // 活动表情
-        soccer: "⚽",
-        basketball: "🏀",
-        football: "🏈",
-        baseball: "⚾",
-        tennis: "🎾",
-
-        // 物体表情
-        gift: "🎁",
-        book: "📚",
-        computer: "💻",
-        bulb: "💡",
-        rocket: "🚀",
-        hourglass: "⌛",
-        watch: "⌚",
-        moneybag: "💰",
-
-        // 符号表情
-        check: "✅",
-        x: "❌",
-        warning: "⚠️",
-        question: "❓",
-        exclamation: "❗",
-        star: "⭐",
-        sparkles: "✨",
-        fire: "🔥",
-        zap: "⚡",
-      },
-    },
-    // 配置工具栏按钮
-    toolbar: [
-      "emoji",
-      "headings",
-      "bold",
-      "italic",
-      "strike",
-      "link",
-      "|",
-      "list",
-      "ordered-list",
-      "check",
-      "outdent",
-      "indent",
-      "|",
-      "quote",
-      "line",
-      "code",
-      "inline-code",
-      "insert-before",
-      "insert-after",
-      "|",
-      "table",
-      "|",
-      "undo",
-      "redo",
-      "|",
-      {
-        name: "import-markdown",
-        icon: '<svg viewBox="0 0 24 24" width="16" height="16" xmlns="http://www.w3.org/2000/svg"><path fill="currentColor" d="M5,20H19V18H5M19,9H15V3H9V9H5L12,16L19,9Z"></path></svg>',
-        tip: "导入Markdown文件",
-        click() {
-          triggerImportFile();
-        },
-      },
-      {
-        name: "clear-content",
-        icon: '<svg viewBox="0 0 24 24" width="16" height="16" xmlns="http://www.w3.org/2000/svg"><path fill="currentColor" d="M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z"></path></svg>',
-        tip: "清空内容",
-        click() {
-          clearEditorContent();
-        },
-      },
-      {
-        name: "copy-formats",
-        icon: '<svg viewBox="0 0 24 24" width="16" height="16" xmlns="http://www.w3.org/2000/svg"><path fill="currentColor" d="M19,21H8V7H19M19,5H8A2,2 0 0,0 6,7V21A2,2 0 0,0 8,23H19A2,2 0 0,0 21,21V7A2,2 0 0,0 19,5M16,1H4A2,2 0 0,0 2,3V17H4V3H16V1Z"></path></svg>',
-        tip: "复制为其他格式",
-        click() {
-          showCopyFormatsMenu();
-        },
-      },
-      "|",
-      "fullscreen",
-      "outline", // 保留大纲按钮，用户可以手动开启
-      "edit-mode",
-      "both",
-      "preview",
-      "export",
-      "help",
-    ],
-    cache: {
-      enable: false, // 禁用缓存，避免数据混乱
-    },
-    after: () => {
-      debugLog(props.enableDebug, props.isDev, "编辑器初始化完成");
-
-      // 添加一个延迟，确保所有图表渲染完成后应用固定样式
-      setTimeout(() => {
-        // 添加固定样式类到所有图表容器
-        const diagramContainers = document.querySelectorAll(".language-mermaid, .language-flow, .language-plantuml, .language-gantt");
-        diagramContainers.forEach((container) => {
-          container.classList.add("diagram-fixed-theme");
-        });
-      }, 1000);
-    },
-  });
-};
-
-// 监听暗色模式变化，实时更新编辑器主题
-watch(
-    () => props.darkMode,
-    (newDarkMode) => {
-      if (vditorInstance.value) {
-        vditorInstance.value.setTheme(newDarkMode ? "dark" : "classic", newDarkMode ? "dark" : "light");
-      }
-    }
-);
-
-// 保存编辑内容，收集所有表单数据并触发保存事件
-const saveEdit = async () => {
-  if (!vditorInstance.value) return;
-
-  // 获取编辑器当前内容
-  const newContent = vditorInstance.value.getValue();
-  // 检查文本内容是否为空
-  if (!newContent.trim()) {
-    emit("update:error", "内容不能为空");
-    return;
-  }
-
-  // 准备更新数据对象，包含内容和元数据
-  const updateData = {
-    content: newContent,
-    remark: editForm.value.remark || null,
-    maxViews: editForm.value.maxViews === 0 ? null : parseInt(editForm.value.maxViews),
-  };
-
-  // 处理密码
-  if (editForm.value.password.trim()) {
-    updateData.password = editForm.value.password;
-  } else if (editForm.value.clearPassword) {
-    updateData.clearPassword = true;
-  }
-
-  // 处理过期时间 - 将选择值转换为ISO日期
-  if (editForm.value.expiryTime !== "0") {
-    const hours = parseInt(editForm.value.expiryTime);
-    const expiresAt = new Date();
-    expiresAt.setHours(expiresAt.getHours() + hours);
-    updateData.expiresAt = expiresAt.toISOString();
-  } else {
-    updateData.expiresAt = null; // 永不过期
-  }
-
-  // 触发保存事件，将数据传递给父组件
-  emit("save", updateData);
-};
-
-// 取消编辑，返回到预览模式
-const cancelEdit = () => {
-  emit("cancel");
-};
-
-// 验证可打开次数输入，确保输入合法
-const validateMaxViews = (event) => {
-  const value = editForm.value.maxViews;
-
-  // 如果是负数，则设置为0
-  if (value < 0) {
-    editForm.value.maxViews = 0;
-    return;
-  }
-
-  // 确保值为有效数字
-  if (isNaN(value) || value === "") {
-    editForm.value.maxViews = 0;
-  } else {
-    // 确保是整数
-    editForm.value.maxViews = parseInt(value);
-  }
-};
-
-// 获取当前编辑内容的辅助方法
-const getCurrentContent = () => {
-  if (vditorInstance.value) {
-    return vditorInstance.value.getValue();
-  }
-  return props.content;
-};
-
-// 暴露方法供父组件调用
-defineExpose({
-  getCurrentContent,
-});
-
-// 组件挂载时初始化编辑器
-onMounted(() => {
-  initEditor();
-
-  // 添加全局点击事件监听器
-  document.addEventListener("click", handleGlobalClick);
-
-  // 添加窗口大小调整事件监听器
-  window.addEventListener("resize", updateCopyFormatMenuPosition);
-
-  // 添加编辑器容器滚动事件监听器
-  setTimeout(() => {
-    const editorContainer = document.querySelector(".vditor-content");
-    if (editorContainer) {
-      editorContainer.addEventListener("scroll", updateCopyFormatMenuPosition);
-    }
-  }, 1000); // 给编辑器足够的初始化时间
-});
-
-// 组件卸载时销毁编辑器实例，避免内存泄漏
-onBeforeUnmount(() => {
-  if (vditorInstance.value) {
-    vditorInstance.value.destroy();
-    vditorInstance.value = null;
-  }
-
-  // 移除全局点击事件监听器
-  document.removeEventListener("click", handleGlobalClick);
-
-  // 移除窗口大小调整事件监听器
-  window.removeEventListener("resize", updateCopyFormatMenuPosition);
-
-  // 移除编辑器容器滚动事件监听器
-  const editorContainer = document.querySelector(".vditor-content");
-  if (editorContainer) {
-    editorContainer.removeEventListener("scroll", updateCopyFormatMenuPosition);
-  }
-});
-
-// 显示复制格式菜单
-const showCopyFormatsMenu = () => {
-  if (!vditorInstance.value) return;
-
-  // 获取工具栏中复制格式按钮的位置
-  const copyFormatBtn = document.querySelector('.vditor-toolbar button[data-type="copy-formats"]');
-  if (!copyFormatBtn) return;
-
-  // 保存按钮元素引用
-  lastCopyFormatsBtnElement.value = copyFormatBtn;
-
-  const rect = copyFormatBtn.getBoundingClientRect();
-
-  // 设置菜单位置
-  copyFormatMenuPosition.value = {
-    x: rect.left,
-    y: rect.bottom + 5,
-  };
-
-  // 显示菜单
-  copyFormatMenuVisible.value = true;
-
-  // 添加点击事件监听器，点击外部区域关闭菜单
-  setTimeout(() => {
-    document.addEventListener("click", closeCopyFormatMenu);
-  }, 0);
-};
-
-// 更新复制格式菜单位置（当窗口调整大小时）
-const updateCopyFormatMenuPosition = () => {
-  if (!copyFormatMenuVisible.value) return;
-
-  // 如果按钮引用无效，尝试重新获取
-  if (!lastCopyFormatsBtnElement.value || !document.body.contains(lastCopyFormatsBtnElement.value)) {
-    const newBtn = document.querySelector('.vditor-toolbar button[data-type="copy-formats"]');
-    if (!newBtn) {
-      // 如果找不到按钮，隐藏菜单并返回
-      copyFormatMenuVisible.value = false;
-      return;
-    }
-    lastCopyFormatsBtnElement.value = newBtn;
-  }
-
-  const rect = lastCopyFormatsBtnElement.value.getBoundingClientRect();
-
-  // 更新菜单位置
-  copyFormatMenuPosition.value = {
-    x: rect.left,
-    y: rect.bottom + 5,
-  };
-};
-
-// 关闭复制格式菜单
-const closeCopyFormatMenu = (event) => {
-  // 如果没有传入event（如从复制函数中直接调用）
-  if (!event) {
-    copyFormatMenuVisible.value = false;
-    document.removeEventListener("click", closeCopyFormatMenu);
-    return;
-  }
-
-  const menu = document.getElementById("copyFormatMenu");
-  // 更新选择器以匹配自定义按钮
-  const copyFormatBtn = document.querySelector('.vditor-toolbar button[data-type="copy-formats"]')?.parentElement;
-
-  if (menu && !menu.contains(event.target) && (!copyFormatBtn || !copyFormatBtn.contains(event.target))) {
-    copyFormatMenuVisible.value = false;
-    document.removeEventListener("click", closeCopyFormatMenu);
-  }
-};
-
-// 复制为Markdown格式
-const copyAsMarkdown = () => {
-  if (!vditorInstance.value) return;
-  const mdContent = vditorInstance.value.getValue();
-  copyToClipboard(mdContent, "已复制为Markdown格式");
-  closeCopyFormatMenu();
-};
-
-// 复制为HTML格式
-const copyAsHTML = () => {
-  if (!vditorInstance.value) return;
-  const htmlContent = vditorInstance.value.getHTML();
-  copyToClipboard(htmlContent, "已复制为HTML格式");
-  closeCopyFormatMenu();
-};
-
-// 复制为纯文本格式
-const copyAsPlainText = () => {
-  if (!vditorInstance.value) return;
-  const htmlContent = vditorInstance.value.getHTML();
-  // 创建一个临时元素来去除HTML标签
-  const tempDiv = document.createElement("div");
-  tempDiv.innerHTML = htmlContent;
-  const plainText = tempDiv.textContent || tempDiv.innerText || "";
-  copyToClipboard(plainText, "已复制为纯文本格式");
-  closeCopyFormatMenu();
-};
-
-// 导出为Word文档
-const exportWordDocument = async () => {
-  if (!vditorInstance.value) return;
-
-  // 显示状态消息
-  notification.value = "正在生成Word文档...";
-
-  try {
-    // 获取Markdown内容
-    const markdownContent = vditorInstance.value.getValue();
-
-    if (!markdownContent) {
-      notification.value = "没有内容可导出";
-      setTimeout(() => {
-        notification.value = "";
-      }, 3000);
-      return;
-    }
-
-    // 使用文档标题（如果有）或默认名称
-    const docTitle = props.paste?.remark || "Markdown导出文档";
-
-    // 使用服务转换成Word文档
-    const blob = await markdownToWord(markdownContent, {
-      title: docTitle,
-    });
-
-    // 生成文件名 - 使用日期和时间
-    const now = new Date();
-    const dateStr = now.toISOString().slice(0, 10);
-    const timeStr = now.toTimeString().slice(0, 8).replace(/:/g, "-");
-    const fileName = `markdown-${dateStr}-${timeStr}.docx`;
-
-    // 使用file-saver保存文件
-    saveAs(blob, fileName);
-
-    // 显示成功消息
-    notification.value = "Word文档已生成并下载";
-    setTimeout(() => {
-      notification.value = "";
-    }, 3000);
-  } catch (error) {
-    console.error("导出Word文档时出错:", error);
-    notification.value = "导出失败，请稍后重试";
-    setTimeout(() => {
-      notification.value = "";
-    }, 3000);
-  } finally {
-    closeCopyFormatMenu();
-  }
-};
-
-// 导出为PNG图片
-const exportAsPng = async () => {
-  if (!vditorInstance.value) return;
-
-  // 显示状态消息
-  notification.value = "正在生成PNG图片...";
-
-  try {
-    // 获取当前编辑器内容的HTML
-    const htmlContent = vditorInstance.value.getHTML();
-
-    if (!htmlContent) {
-      notification.value = "没有内容可导出";
-      setTimeout(() => {
-        notification.value = "";
-      }, 3000);
-      return;
-    }
-
-    // 使用标题（如果有）或默认名称
-    const docTitle = props.paste?.remark || "Markdown导出图片";
-
-    // 检查编辑器容器是否有ID
-    const editorContainer = document.getElementById("vditor-editor");
-    if (editorContainer) {
-      // 为了与htmlToImage.js兼容，临时添加一个ID为vditor的属性
-      editorContainer.setAttribute("id", "vditor");
-    }
-
-    // 使用editorContentToPng函数将编辑器内容转换为PNG
-    const result = await htmlToImage.editorContentToPng(vditorInstance.value, {
-      title: docTitle,
-      filename: `${docTitle}.png`, // 设置文件名
-      autoSave: false, // 禁用自动保存，避免生成两个文件
-      imageOptions: {
-        quality: 0.95,
-        pixelRatio: 2, // 高清图像倍率
-        backgroundColor: props.darkMode ? "#1F2937" : "#FFFFFF",
-        skipFonts: false, // 不跳过字体处理
-      },
-      style: {
-        fontFamily: 'Arial, "Helvetica Neue", Helvetica, sans-serif',
-        padding: "20px",
-        maxWidth: "1920px", // 限制最大宽度
-      },
-      beforeCapture: (element) => {
-        debugLog(props.enableDebug, props.isDev, "准备捕获编辑器内容...");
-      },
-      afterCapture: (capturedElement) => {
-        debugLog(props.enableDebug, props.isDev, "内容已捕获，准备转换为PNG");
-        // 恢复编辑器容器的原始ID
-        if (editorContainer) {
-          editorContainer.setAttribute("id", "vditor-editor");
-        }
-      },
-    });
-
-    // 检查结果
-    if (!result || result.success === false) {
-      throw new Error(result?.error || "导出PNG失败");
-    }
-
-    // 获取blob数据
-    const blob = result.blob || result;
-
-    // 生成文件名 - 使用日期和时间
-    const now = new Date();
-    const dateStr = now.toISOString().slice(0, 10);
-    const timeStr = now.toTimeString().slice(0, 8).replace(/:/g, "-");
-    const fileName = `${docTitle.replace(/[\\/:*?"<>|]/g, "_")}-${dateStr}-${timeStr}.png`;
-
-    // 使用file-saver保存文件
-    saveAs(blob, fileName);
-
-    // 显示成功消息
-    notification.value = "PNG图片已生成并下载";
-    setTimeout(() => {
-      notification.value = "";
-    }, 3000);
-  } catch (error) {
-    console.error("导出PNG图片时出错:", error);
-    // 尝试恢复编辑器容器的原始ID，即使在错误情况下
-    const editorContainer = document.getElementById("vditor");
-    if (editorContainer) {
-      editorContainer.setAttribute("id", "vditor-editor");
-    }
-
-    notification.value = "导出失败，请稍后重试";
-    setTimeout(() => {
-      notification.value = "";
-    }, 3000);
-  } finally {
-    closeCopyFormatMenu();
-  }
-};
-
-// 通用复制到剪贴板函数
-const copyToClipboard = (text, successMessage) => {
-  if (!text) {
-    emit("update:error", "没有可复制的内容");
-    return;
-  }
-
-  try {
-    navigator.clipboard
-        .writeText(text)
-        .then(() => {
-          // 使用notification显示成功消息，而非error
-          notification.value = successMessage;
-          setTimeout(() => {
-            notification.value = "";
-          }, 3000);
-        })
-        .catch((err) => {
-          console.error("复制失败:", err);
-          emit("update:error", "复制失败，请手动选择内容复制");
-          setTimeout(() => {
-            emit("update:error", "");
-          }, 3000);
-        });
-  } catch (e) {
-    console.error("复制API不可用:", e);
-    // 降级方案：创建临时文本区域
-    const textarea = document.createElement("textarea");
-    textarea.value = text;
-    textarea.style.position = "fixed";
-    textarea.style.opacity = "0";
-    document.body.appendChild(textarea);
-    textarea.select();
-    try {
-      document.execCommand("copy");
-      // 使用notification显示成功消息，而非error
-      notification.value = successMessage;
-      setTimeout(() => {
-        notification.value = "";
-      }, 3000);
-    } catch (err) {
-      console.error("复制失败:", err);
-      emit("update:error", "复制失败，请手动选择内容复制");
-      setTimeout(() => {
-        emit("update:error", "");
-      }, 3000);
-    }
-    document.body.removeChild(textarea);
-  }
-};
-
-const handleGlobalClick = (event) => {
-  // 如果点击事件不是来自复制格式菜单，并且复制格式菜单可见，则关闭菜单
-  const menu = document.getElementById("copyFormatMenu");
-  if (
-      menu &&
-      !menu.contains(event.target) &&
-      // 更新选择器以匹配自定义按钮
-      !event.target.closest('.vditor-toolbar button[data-type="copy-formats"]') &&
-      copyFormatMenuVisible.value
-  ) {
-    closeCopyFormatMenu();
-  }
-};
-
-// 导入Markdown文件的函数
-const importMarkdownFile = (event) => {
-  if (!vditorInstance.value) return;
-
-  const file = event.target.files[0];
-  if (!file) return;
-
-  // 检查文件类型
-  const validTypes = [".md", ".markdown", ".mdown", ".mkd"];
-  const fileName = file.name.toLowerCase();
-  const isValidType = validTypes.some((type) => fileName.endsWith(type));
-
-  if (!isValidType) {
-    notification.value = "不支持的文件类型，请选择Markdown文件";
-    setTimeout(() => {
-      notification.value = "";
-    }, 3000);
-    return;
-  }
-
-  // 文件大小检查（限制为10MB）
-  const maxSize = 10 * 1024 * 1024; // 10MB
-  if (file.size > maxSize) {
-    notification.value = "文件过大，请选择小于10MB的文件";
-    setTimeout(() => {
-      notification.value = "";
-    }, 3000);
-    return;
-  }
-
-  // 检查编辑器是否有内容
-  const currentContent = vditorInstance.value.getValue();
-  if (currentContent && currentContent.trim() !== "") {
-    if (!confirm("当前编辑器已有内容，导入将覆盖现有内容。是否继续？")) {
-      // 重置文件输入
-      event.target.value = "";
-      return;
-    }
-  }
-
-  // 读取文件内容
-  const reader = new FileReader();
-  notification.value = "正在导入文件...";
-
-  reader.onload = (e) => {
-    try {
-      const content = e.target.result;
-      vditorInstance.value.setValue(content);
-      notification.value = "文件导入成功";
-      setTimeout(() => {
-        notification.value = "";
-      }, 2000);
-    } catch (error) {
-      console.error("导入文件时出错:", error);
-      notification.value = "导入失败，请重试";
-      setTimeout(() => {
-        notification.value = "";
-      }, 3000);
-    }
-  };
-
-  reader.onerror = () => {
-    console.error("读取文件时出错");
-    notification.value = "读取文件时出错，请重试";
-    setTimeout(() => {
-      notification.value = "";
-    }, 3000);
-  };
-
-  reader.readAsText(file);
-
-  // 重置文件输入，以便可以重新选择同一文件
-  event.target.value = "";
-};
-
-// 触发文件选择的函数
-const triggerImportFile = () => {
-  // 使用ref访问文件输入元素并触发点击
-  if (markdownImporter.value) {
-    markdownImporter.value.click();
-  }
-};
-
-// 清空编辑器内容函数
-const clearEditorContent = () => {
-  if (!vditorInstance.value) return;
-
-  // 添加确认对话框
-  if (confirm("确定要清空所有内容吗？")) {
-    // 清空编辑器内容
-    vditorInstance.value.setValue("");
-
-    // 显示成功消息
-    notification.value = "内容已清空";
-    setTimeout(() => {
-      notification.value = "";
-    }, 2000);
-  }
-};
-</script>
-
 <template>
-  <div class="paste-view-editor">
-    <!-- 成功通知提示 -->
-    <div v-if="notification" class="fixed bottom-4 right-4 z-50 px-4 py-2 rounded-lg bg-green-500 text-white shadow-lg notification-toast flex items-center">
-      <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-      </svg>
-      <span>{{ notification }}</span>
-    </div>
-
-    <!-- 添加隐藏的文件输入控件用于导入Markdown文件 -->
-    <input type="file" ref="markdownImporter" accept=".md,.markdown,.mdown,.mkd" style="display: none" @change="importMarkdownFile" />
-
-    <div class="editor-wrapper">
-      <!-- 编辑器区域 - Vditor实例将挂载到这个div -->
-      <div class="flex flex-col gap-4">
-        <!-- Markdown编辑器容器 -->
-        <div id="vditor-editor" class="w-full"></div>
+  <div class="paste-view-editor-wrapper">
+    <!-- 主要编辑器内容 -->
+    <div class="paste-view-editor">
+      <!-- 成功通知提示 -->
+      <div v-if="notification" class="fixed bottom-4 right-4 z-50 px-4 py-2 rounded-lg bg-green-500 text-white shadow-lg notification-toast flex items-center">
+        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+        </svg>
+        {{ notification }}
       </div>
-    </div>
 
-    <!-- 元数据编辑表单 - 允许编辑备注、过期时间等 -->
-    <div class="mt-6 border-t pt-4" :class="darkMode ? 'border-gray-700' : 'border-gray-200'">
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-        <!-- 链接后缀 - 不可修改 -->
-        <div class="form-group">
-          <label class="form-label block mb-1 text-sm font-medium" :class="darkMode ? 'text-gray-300' : 'text-gray-700'">链接后缀</label>
-          <input
+      <!-- 添加隐藏的文件输入控件用于导入Markdown文件 -->
+      <input type="file" ref="markdownImporter" accept=".md,.markdown,.mdown,.mkd" style="display: none" @change="importMarkdownFile" />
+
+      <!-- 编辑器模式切换按钮 -->
+      <div class="mb-1 flex justify-end">
+        <button
+          class="px-1.5 py-0.5 text-xs rounded-md border transition-colors"
+          :class="darkMode ? 'bg-gray-700 hover:bg-gray-600 text-gray-200 border-gray-600' : 'bg-gray-50 hover:bg-gray-100 text-gray-700 border-gray-200'"
+          @click="toggleEditorMode"
+          :title="isPlainTextMode ? '切换到Markdown模式' : '切换到纯文本模式'"
+        >
+          <span class="inline-flex items-center">
+            <svg class="w-3 h-3 mr-0.5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 15v-4H8l4-8v4h3l-4 8z" fill="currentColor" />
+            </svg>
+            {{ isPlainTextMode ? "切换MD" : "切换TXT" }}
+          </span>
+        </button>
+      </div>
+
+      <div class="editor-wrapper">
+        <!-- 编辑器区域 -->
+        <div class="flex flex-col gap-2">
+          <!-- 纯文本编辑器 (在纯文本模式下显示) -->
+          <textarea
+            v-if="isPlainTextMode"
+            class="w-full h-[500px] p-4 font-mono text-base border rounded-lg resize-y focus:outline-none focus:ring-2"
+            :class="darkMode ? 'bg-gray-800 border-gray-700 text-gray-100 focus:ring-primary-600' : 'bg-white border-gray-300 text-gray-900 focus:ring-primary-500'"
+            v-model="plainTextContent"
+            placeholder="在此输入纯文本内容..."
+            @input="syncContentFromPlainText"
+          ></textarea>
+
+          <!-- Markdown编辑器 (在Markdown模式下显示) -->
+          <VditorUnified
+            v-else
+            ref="editorRef"
+            :dark-mode="darkMode"
+            :is-plain-text-mode="false"
+            v-model="editorContent"
+            @editor-ready="handleEditorReady"
+            @content-change="handleContentChange"
+            @import-file="triggerImportFile"
+            @clear-content="clearEditorContent"
+            @show-copy-formats="showCopyFormatsMenu"
+          />
+        </div>
+      </div>
+
+      <!-- 元数据编辑表单 - 允许编辑备注、过期时间等 -->
+      <div class="mt-6 border-t pt-4" :class="darkMode ? 'border-gray-700' : 'border-gray-200'">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+          <!-- 链接后缀 - 不可修改 -->
+          <div class="form-group">
+            <label class="form-label block mb-1 text-sm font-medium" :class="darkMode ? 'text-gray-300' : 'text-gray-700'">链接后缀</label>
+            <input
               type="text"
               class="form-input w-full rounded-md shadow-sm cursor-not-allowed opacity-75"
               :class="getInputClasses(darkMode)"
               placeholder="不可修改"
               v-model="editForm.customLink"
               disabled
-          />
-          <p class="mt-1 text-xs" :class="darkMode ? 'text-gray-500' : 'text-gray-400'">后缀不可修改，仅支持字母、数字、-和_</p>
-        </div>
+            />
+            <p class="mt-1 text-xs" :class="darkMode ? 'text-gray-500' : 'text-gray-400'">后缀不可修改，仅支持字母、数字、-和_</p>
+          </div>
 
-        <!-- 备注信息 -->
-        <div class="form-group">
-          <label class="form-label block mb-1 text-sm font-medium" :class="darkMode ? 'text-gray-300' : 'text-gray-700'">备注(可选)</label>
-          <input type="text" class="form-input w-full rounded-md shadow-sm" :class="getInputClasses(darkMode)" placeholder="添加备注信息..." v-model="editForm.remark" />
-        </div>
+          <!-- 备注信息 -->
+          <div class="form-group">
+            <label class="form-label block mb-1 text-sm font-medium" :class="darkMode ? 'text-gray-300' : 'text-gray-700'">备注(可选)</label>
+            <input type="text" class="form-input w-full rounded-md shadow-sm" :class="getInputClasses(darkMode)" placeholder="添加备注信息..." v-model="editForm.remark" />
+          </div>
 
-        <!-- 过期时间选择 -->
-        <div class="form-group">
-          <label class="form-label block mb-1 text-sm font-medium" :class="darkMode ? 'text-gray-300' : 'text-gray-700'">过期时间</label>
-          <select class="form-input w-full rounded-md shadow-sm" :class="getInputClasses(darkMode)" v-model="editForm.expiryTime">
-            <option value="1">1小时</option>
-            <option value="24">1天</option>
-            <option value="168">7天</option>
-            <option value="720">30天</option>
-            <option value="0">永不过期</option>
-          </select>
-        </div>
+          <!-- 过期时间选择 -->
+          <div class="form-group">
+            <label class="form-label block mb-1 text-sm font-medium" :class="darkMode ? 'text-gray-300' : 'text-gray-700'">过期时间</label>
+            <select class="form-input w-full rounded-md shadow-sm" :class="getInputClasses(darkMode)" v-model="editForm.expiryTime">
+              <option value="1">1小时</option>
+              <option value="24">1天</option>
+              <option value="168">7天</option>
+              <option value="720">30天</option>
+              <option value="0">永不过期</option>
+            </select>
+          </div>
 
-        <!-- 可打开次数设置 -->
-        <div class="form-group">
-          <label class="form-label block mb-1 text-sm font-medium" :class="darkMode ? 'text-gray-300' : 'text-gray-700'">可打开次数(0表示无限制)</label>
-          <input
+          <!-- 可打开次数设置 -->
+          <div class="form-group">
+            <label class="form-label block mb-1 text-sm font-medium" :class="darkMode ? 'text-gray-300' : 'text-gray-700'">可打开次数(0表示无限制)</label>
+            <input
               type="number"
               min="0"
               step="1"
@@ -1011,444 +107,441 @@ const clearEditorContent = () => {
               placeholder="0表示无限制"
               v-model.number="editForm.maxViews"
               @input="validateMaxViews"
-          />
-        </div>
+            />
+          </div>
 
-        <!-- 密码设置 -->
-        <div class="form-group">
-          <label class="form-label block mb-1 text-sm font-medium" :class="darkMode ? 'text-gray-300' : 'text-gray-700'">访问密码</label>
-          <div class="flex items-center space-x-2">
-            <input
+          <!-- 密码设置 -->
+          <div class="form-group">
+            <label class="form-label block mb-1 text-sm font-medium" :class="darkMode ? 'text-gray-300' : 'text-gray-700'">访问密码</label>
+            <div class="flex items-center space-x-2">
+              <input
                 :type="showPassword ? 'text' : 'password'"
+                autocomplete="new-password"
                 class="form-input w-full rounded-md shadow-sm"
                 :class="getInputClasses(darkMode)"
                 placeholder="设置访问密码..."
                 v-model="editForm.password"
                 :disabled="editForm.clearPassword"
-            />
-          </div>
-          <div class="mt-2 flex items-center">
-            <input
+              />
+            </div>
+            <div class="mt-2 flex items-center">
+              <input
                 type="checkbox"
                 id="clear-password"
                 class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
                 :class="darkMode ? 'bg-gray-700 border-gray-600' : ''"
                 v-model="editForm.clearPassword"
-            />
-            <label for="clear-password" class="ml-2 text-xs" :class="darkMode ? 'text-gray-400' : 'text-gray-600'"> 清除访问密码 </label>
+              />
+              <label for="clear-password" class="ml-2 text-xs" :class="darkMode ? 'text-gray-400' : 'text-gray-600'"> 清除访问密码 </label>
+            </div>
+            <p class="mt-1 text-xs" :class="darkMode ? 'text-gray-500' : 'text-gray-400'">
+              {{ editForm.clearPassword ? "将移除密码保护" : props.paste?.hasPassword ? "留空表示保持原密码不变" : "设置密码后，他人访问需要输入密码" }}
+            </p>
           </div>
-          <p class="mt-1 text-xs" :class="darkMode ? 'text-gray-500' : 'text-gray-400'">
-            {{ editForm.clearPassword ? "将移除密码保护" : props.paste?.hasPassword ? "留空表示保持原密码不变" : "设置密码后，他人访问需要输入密码" }}
-          </p>
         </div>
-      </div>
 
-      <!-- 保存和取消按钮 -->
-      <div class="submit-section mt-6 flex flex-row items-center gap-4">
-        <!-- 保存按钮 -->
-        <button
+        <!-- 保存和取消按钮 -->
+        <div class="submit-section mt-6 flex flex-row items-center gap-4">
+          <!-- 保存按钮 -->
+          <button
             @click="saveEdit"
             class="btn-primary px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
             :disabled="loading"
-        >
-          {{ loading ? "保存中..." : "保存修改" }}
-        </button>
+          >
+            {{ loading ? "保存中..." : "保存修改" }}
+          </button>
 
-        <!-- 取消按钮 -->
-        <button
+          <!-- 取消按钮 -->
+          <button
             @click="cancelEdit"
             class="px-4 py-2 text-sm font-medium border rounded-md transition-colors"
             :class="darkMode ? 'border-gray-600 text-gray-300 hover:bg-gray-800' : 'border-gray-300 text-gray-700 hover:bg-gray-50'"
             title="取消编辑并恢复原始内容"
-        >
-          取消
-        </button>
+          >
+            取消
+          </button>
 
-        <!-- 状态提示信息 -->
-        <div class="saving-status ml-auto text-sm" v-if="error">
-          <span :class="[error.includes('成功') ? (darkMode ? 'text-green-400' : 'text-green-600') : darkMode ? 'text-red-400' : 'text-red-600']">
-            {{ error }}
-          </span>
+          <!-- 状态提示信息 -->
+          <div class="saving-status ml-auto text-sm" v-if="error">
+            <span :class="[error.includes('成功') ? (darkMode ? 'text-green-400' : 'text-green-600') : darkMode ? 'text-red-400' : 'text-red-600']">
+              {{ error }}
+            </span>
+          </div>
         </div>
       </div>
     </div>
 
-    <!-- 复制格式菜单 -->
-    <div
-        v-if="copyFormatMenuVisible"
-        id="copyFormatMenu"
-        class="absolute bg-white dark:bg-gray-800 rounded-lg shadow-lg py-1 z-50 border border-gray-200 dark:border-gray-700"
-        :style="{ top: `${copyFormatMenuPosition.y}px`, left: `${copyFormatMenuPosition.x}px` }"
-    >
-      <div class="px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer flex items-center" @click="copyAsMarkdown">
-        <svg class="h-4 w-4 mr-2" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M14 3v4a1 1 0 0 0 1 1h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-          <path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-          <path d="M9 9h1v6h1" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-          <path d="M15 15h-2v-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-        </svg>
-        <span>复制为Markdown</span>
-      </div>
-      <div class="px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer flex items-center" @click="copyAsHTML">
-        <svg class="h-4 w-4 mr-2" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path
-              d="M9 16H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-4l-4 4z"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-          />
-          <path d="M8 9l3 3-3 3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-          <path d="M16 15l-3-3 3-3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-        </svg>
-        <span>复制为HTML</span>
-      </div>
-      <div class="px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer flex items-center" @click="copyAsPlainText">
-        <svg class="h-4 w-4 mr-2" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M14 3v4a1 1 0 0 0 1 1h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-          <path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-          <path d="M9 9h6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-          <path d="M9 13h6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-          <path d="M9 17h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-        </svg>
-        <span>复制为纯文本</span>
-      </div>
-      <div class="px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer flex items-center" @click="exportWordDocument">
-        <svg class="h-4 w-4 mr-2" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-          <path d="M14 2v6h6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-          <path d="M16 13H8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-          <path d="M16 17H8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-          <path d="M10 9H8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-        </svg>
-        <span>导出为Word文档</span>
-      </div>
-      <div class="px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer flex items-center" @click="exportAsPng">
-        <svg class="h-4 w-4 mr-2" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-          <path d="M17 21v-8h-8v8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-          <path d="M7 3v5h5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-        </svg>
-        <span>导出为PNG图片</span>
-      </div>
-    </div>
+    <!-- 复制格式菜单组件 -->
+    <PasteCopyFormatMenu
+      :visible="copyFormatMenuVisible"
+      :position="copyFormatMenuPosition"
+      :editor="editorRef"
+      :dark-mode="darkMode"
+      :is-plain-text-mode="isPlainTextMode"
+      :plain-text-content="plainTextContent"
+      :document-title="editForm.remark || 'CloudPaste文档'"
+      @close="closeCopyFormatMenu"
+      @status-message="handleStatusMessage"
+    />
   </div>
 </template>
 
+<script setup>
+import { ref, watch, onBeforeUnmount } from "vue";
+import { getInputClasses } from "./PasteViewUtils";
+import VditorUnified from "../common/VditorUnified.vue";
+import PasteCopyFormatMenu from "./PasteCopyFormatMenu.vue";
+
+// Props 定义
+const props = defineProps({
+  darkMode: { type: Boolean, required: true },
+  content: { type: String, default: "" },
+  paste: { type: Object, default: () => ({}) },
+  loading: { type: Boolean, default: false },
+  error: { type: String, default: "" },
+  isDev: { type: Boolean, default: false },
+  enableDebug: { type: Boolean, default: false },
+  isPlainTextMode: { type: Boolean, default: false },
+});
+
+// Emits 定义
+const emit = defineEmits(["save", "cancel", "update:error", "update:isPlainTextMode"]);
+
+// 响应式数据
+const editorRef = ref(null);
+const editorContent = ref(props.content);
+const notification = ref("");
+const showPassword = ref(false);
+const markdownImporter = ref(null);
+
+// 纯文本模式变量
+const isPlainTextMode = ref(props.isPlainTextMode);
+// 纯文本内容
+const plainTextContent = ref("");
+// 原始纯文本内容（保留格式）
+const originalPlainTextContent = ref("");
+
+// 复制格式菜单状态
+const copyFormatMenuVisible = ref(false);
+const copyFormatMenuPosition = ref({ x: 0, y: 0 });
+
+// 计算初始过期时间选项
+const getInitialExpiryTime = (expiresAt) => {
+  if (!expiresAt) return "0";
+
+  const expiryDate = new Date(expiresAt);
+  const now = new Date();
+  const diffHours = Math.round((expiryDate - now) / (1000 * 60 * 60));
+
+  if (diffHours <= 1) {
+    return "1";
+  } else if (diffHours <= 24) {
+    return "24";
+  } else if (diffHours <= 168) {
+    return "168";
+  } else if (diffHours <= 720) {
+    return "720";
+  } else {
+    return "0"; // 设置为永不过期
+  }
+};
+
+// 编辑表单数据
+const editForm = ref({
+  remark: props.paste?.remark || "",
+  customLink: props.paste?.slug || "",
+  expiryTime: getInitialExpiryTime(props.paste?.expires_at),
+  maxViews: props.paste?.max_views || 0,
+  password: "",
+  clearPassword: false, // 新增是否清除密码的标志
+});
+
+// 工具函数
+const showNotification = (message, duration = 2000) => {
+  notification.value = message;
+  setTimeout(() => {
+    notification.value = "";
+  }, duration);
+};
+
+// 切换编辑器模式
+const toggleEditorMode = () => {
+  isPlainTextMode.value = !isPlainTextMode.value;
+  emit("update:isPlainTextMode", isPlainTextMode.value);
+
+  if (isPlainTextMode.value) {
+    // 切换到纯文本模式，保存当前Markdown内容
+    if (editorRef.value) {
+      plainTextContent.value = editorContent.value;
+      originalPlainTextContent.value = editorContent.value;
+    }
+  } else {
+    // 切换到Markdown模式，使用纯文本内容
+    editorContent.value = plainTextContent.value || "";
+  }
+};
+
+// 同步纯文本内容到编辑器
+const syncContentFromPlainText = () => {
+  // 同时更新原始纯文本内容，保留格式
+  originalPlainTextContent.value = plainTextContent.value;
+  editorContent.value = plainTextContent.value;
+};
+
+// 验证可打开次数输入，确保输入合法
+const validateMaxViews = () => {
+  const value = editForm.value.maxViews;
+  if (value < 0) {
+    editForm.value.maxViews = 0;
+  }
+  // 确保是整数
+  if (!Number.isInteger(value)) {
+    editForm.value.maxViews = Math.floor(value);
+  }
+};
+
+// 编辑器事件处理
+const handleEditorReady = () => {
+  console.log("编辑器已准备就绪");
+};
+
+const handleContentChange = (content) => {
+  editorContent.value = content;
+};
+
+// 触发导入文件功能
+const triggerImportFile = () => {
+  if (markdownImporter.value) {
+    markdownImporter.value.click();
+  }
+};
+
+// 清空编辑器内容
+const clearEditorContent = () => {
+  if (confirm("确定要清空所有内容吗？此操作不可撤销。")) {
+    if (isPlainTextMode.value) {
+      plainTextContent.value = "";
+      originalPlainTextContent.value = "";
+    } else {
+      editorContent.value = "";
+      if (editorRef.value) {
+        editorRef.value.setValue("");
+      }
+    }
+    showNotification("内容已清空");
+  }
+};
+
+// 显示复制格式菜单
+const showCopyFormatsMenu = (position = null) => {
+  if (position) {
+    // 如果传入了位置参数，直接使用（来自按钮点击事件）
+    copyFormatMenuPosition.value = position;
+  } else {
+    // 如果没有传入位置，使用默认位置
+    copyFormatMenuPosition.value = {
+      x: 100,
+      y: 100,
+    };
+  }
+
+  // 显示菜单
+  copyFormatMenuVisible.value = true;
+};
+
+// 关闭复制格式菜单
+const closeCopyFormatMenu = () => {
+  copyFormatMenuVisible.value = false;
+};
+
+// 处理状态消息
+const handleStatusMessage = ({ message, type }) => {
+  if (type === "error") {
+    emit("update:error", message);
+  } else {
+    showNotification(message);
+  }
+};
+
+// 监听 props 变化
+watch(
+  () => props.content,
+  (newContent) => {
+    editorContent.value = newContent;
+  }
+);
+
+watch(
+  () => props.paste,
+  (newPaste) => {
+    if (newPaste) {
+      editForm.value.remark = newPaste.remark || "";
+      editForm.value.customLink = newPaste.slug || "";
+      editForm.value.maxViews = newPaste.max_views || 0;
+      editForm.value.password = "";
+
+      // 处理过期时间
+      editForm.value.expiryTime = getInitialExpiryTime(newPaste.expires_at);
+    }
+  }
+);
+
+// 保存编辑内容，收集所有表单数据并触发保存事件
+const saveEdit = async () => {
+  // 根据当前模式获取内容
+  let newContent;
+
+  if (isPlainTextMode.value) {
+    // 纯文本模式下，使用plainTextContent或originalPlainTextContent
+    newContent = originalPlainTextContent.value || plainTextContent.value;
+  } else if (editorRef.value) {
+    // Markdown模式下，从编辑器获取内容
+    newContent = editorContent.value;
+  } else {
+    emit("update:error", "编辑器未初始化");
+    return;
+  }
+
+  // 检查文本内容是否为空
+  if (!newContent || !newContent.trim()) {
+    emit("update:error", "内容不能为空");
+    return;
+  }
+
+  // 准备更新数据对象，包含内容和元数据
+  const updateData = {
+    content: newContent,
+    remark: editForm.value.remark || null,
+    max_views: editForm.value.maxViews === 0 ? null : parseInt(editForm.value.maxViews),
+  };
+
+  // 处理自定义链接 - 注意：链接后缀不可修改，所以不包含在更新数据中
+
+  // 处理过期时间
+  if (editForm.value.expiryTime !== "0") {
+    const hours = parseInt(editForm.value.expiryTime);
+    const expiresAt = new Date();
+    expiresAt.setHours(expiresAt.getHours() + hours);
+    updateData.expires_at = expiresAt.toISOString();
+  } else {
+    updateData.expires_at = null; // 永不过期
+  }
+
+  // 处理密码设置
+  if (editForm.value.clearPassword) {
+    // 如果选择清除密码，明确设置为null
+    updateData.password = null;
+    updateData.clearPassword = true;
+  } else if (editForm.value.password && editForm.value.password.trim()) {
+    // 如果设置了新密码
+    updateData.password = editForm.value.password.trim();
+  }
+  // 如果密码字段为空且未选择清除，则不包含password字段，保持原密码不变
+
+  // 触发保存事件，将数据传递给父组件
+  emit("save", updateData);
+};
+
+// 取消编辑
+const cancelEdit = () => {
+  emit("cancel");
+};
+
+// 导入Markdown文件的函数
+const importMarkdownFile = (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  // 检查文件类型
+  const allowedTypes = [".md", ".markdown", ".mdown", ".mkd", ".txt"];
+  const fileName = file.name.toLowerCase();
+  const isValidType = allowedTypes.some((type) => fileName.endsWith(type));
+
+  if (!isValidType) {
+    emit("update:error", "请选择有效的Markdown文件（.md, .markdown, .mdown, .mkd, .txt）");
+    return;
+  }
+
+  // 检查文件大小（限制为5MB）
+  const maxSize = 5 * 1024 * 1024; // 5MB
+  if (file.size > maxSize) {
+    emit("update:error", "文件大小不能超过5MB");
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const content = e.target.result;
+
+      if (isPlainTextMode.value) {
+        // 纯文本模式下，直接设置纯文本内容
+        plainTextContent.value = content;
+        originalPlainTextContent.value = content;
+      } else {
+        // Markdown模式下，设置编辑器内容
+        editorContent.value = content;
+        if (editorRef.value) {
+          editorRef.value.setValue(content);
+        }
+      }
+
+      showNotification("文件导入成功");
+
+      // 清空文件输入，允许重复导入同一文件
+      if (markdownImporter.value) {
+        markdownImporter.value.value = "";
+      }
+    } catch (error) {
+      console.error("导入文件时出错:", error);
+      emit("update:error", "导入文件失败");
+    }
+  };
+
+  reader.onerror = () => {
+    emit("update:error", "读取文件失败");
+  };
+
+  reader.readAsText(file, "UTF-8");
+};
+
+// 监听 isPlainTextMode 变化
+watch(
+  () => isPlainTextMode.value,
+  (newMode) => {
+    emit("update:isPlainTextMode", newMode);
+  }
+);
+
+// 清理
+onBeforeUnmount(() => {
+  notification.value = "";
+  copyFormatMenuVisible.value = false;
+});
+</script>
+
 <style scoped>
-/* 编辑器容器样式 */
 .paste-view-editor {
   width: 100%;
 }
 
 .editor-wrapper {
   width: 100%;
-}
-
-/* 编辑器容器适应屏幕宽度，添加边框和圆角 */
-:deep(#vditor-editor) {
-  width: 100%;
-  border: 1px solid v-bind('props.darkMode ? "#4B5563" : "#E5E7EB"');
-  border-radius: 0.5rem;
   margin-bottom: 1rem;
-  overflow: hidden;
-}
-
-/* 工具栏样式调整，适应明暗主题 */
-:deep(.vditor-toolbar) {
-  background-color: v-bind('props.darkMode ? "#374151" : "#F9FAFB"');
-  border-bottom: 1px solid v-bind('props.darkMode ? "#4B5563" : "#E5E7EB"');
-}
-
-:deep(.vditor-toolbar__item) {
-  color: v-bind('props.darkMode ? "#E5E7EB" : "#4B5563"');
-}
-
-:deep(.vditor-toolbar__item--current) {
-  background-color: v-bind('props.darkMode ? "#1F2937" : "#F3F4F6"');
-}
-
-:deep(.vditor-toolbar__item:hover) {
-  background-color: v-bind('props.darkMode ? "#4B5563" : "#E5E7EB"');
-}
-
-/* 表单和按钮通用样式 */
-.form-input {
-  display: block;
-  width: 100%;
-  padding: 0.5rem 0.75rem;
-  font-size: 0.875rem;
-  line-height: 1.25rem;
-  border-width: 1px;
-  border-radius: 0.375rem;
-  transition: all 0.2s;
-}
-
-/* 主按钮样式 */
-.btn-primary {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0.5rem 1rem;
-  font-weight: 500;
-  border-radius: 0.375rem;
-  background-color: v-bind('props.darkMode ? "#3b82f6" : "#2563eb"');
-  color: white;
-  transition: background-color 0.2s;
-}
-
-.btn-primary:hover {
-  background-color: v-bind('props.darkMode ? "#2563eb" : "#1d4ed8"');
-}
-
-.btn-primary:disabled {
-  opacity: 0.7;
-  cursor: not-allowed;
-}
-
-/* 编辑器样式定制 */
-:deep(.vditor) {
-  border-radius: 0.375rem;
-  /* 移除整体过渡效果，避免拖动时的延迟感 */
-  transition: border-color 0.2s, background-color 0.2s;
-}
-
-/* 确保编辑器图表有固定样式 */
-:deep(.diagram-fixed-theme) {
-  background-color: white !important; /* 强制使用白色背景 */
-  color: #333 !important; /* 强制使用深色文本 */
-  filter: none !important; /* 移除任何可能的过滤器效果 */
-}
-
-/* 编辑器高度调整拖动区域样式 */
-:deep(.vditor-resize) {
-  padding: 3px 0;
-  cursor: row-resize;
-  user-select: none;
-  position: absolute;
-  width: 100%;
-  z-index: 20; /* 提高z-index确保在最上层 */
-  transition: none; /* 移除过渡动画，避免拖动时的延迟感 */
-}
-
-:deep(.vditor-resize > div) {
-  height: 3px;
-  background-color: v-bind('props.darkMode ? "#3f3f3f" : "#e5e7eb"');
-  border-radius: 3px;
-  transition: background-color 0.15s; /* 只保留背景色的过渡效果 */
-}
-
-:deep(.vditor-resize:hover > div) {
-  background-color: v-bind('props.darkMode ? "#007acc" : "#d1d5db"');
-}
-
-:deep(.vditor-resize:active > div) {
-  background-color: v-bind('props.darkMode ? "#2563eb" : "#3b82f6"');
-}
-
-/* 移动端响应式优化 */
-@media (max-width: 640px) {
-  /* 移动设备下编辑器工具栏精简 */
-  :deep(.vditor-toolbar) {
-    overflow-x: auto;
-    white-space: nowrap;
-    padding: 0.25rem;
-  }
-}
-
-/* 编辑器样式定制 */
-:deep(.vditor) {
-  border-radius: 0.375rem;
-  /* 移除整体过渡效果，避免拖动时的延迟感 */
-  transition: border-color 0.2s, background-color 0.2s;
-}
-
-/* 确保编辑器图表有固定样式 */
-:deep(.diagram-fixed-theme) {
-  background-color: white !important; /* 强制使用白色背景 */
-  color: #333 !important; /* 强制使用深色文本 */
-  filter: none !important; /* 移除任何可能的过滤器效果 */
-}
-
-/* 确保mermaid图表使用固定样式 */
-:deep(.language-mermaid) {
-  background-color: white !important;
-  padding: 10px !important;
-  border-radius: 4px !important;
-  border: 1px solid #e5e7eb !important;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05) !important;
-}
-
-/* 流程图样式固定 */
-:deep(.language-flow) {
-  background-color: white !important;
-  padding: 10px !important;
-  border-radius: 4px !important;
-  border: 1px solid #e5e7eb !important;
-}
-
-/* PlantUML图表样式固定 */
-:deep(.language-plantuml) {
-  background-color: white !important;
-  padding: 10px !important;
-  border-radius: 4px !important;
-  border: 1px solid #e5e7eb !important;
-}
-
-/* 甘特图样式固定 */
-:deep(.language-gantt) {
-  background-color: white !important;
-  padding: 10px !important;
-  border-radius: 4px !important;
-  border: 1px solid #e5e7eb !important;
-}
-
-/* 图表内的SVG元素样式固定 */
-:deep(.diagram-fixed-theme svg) {
-  background-color: white !important;
-}
-
-/* 添加多级列表样式支持 */
-/* 有序列表样式 */
-:deep(.vditor-reset ol) {
-  list-style-type: decimal;
-  padding-left: 2em;
-}
-
-:deep(.vditor-reset ol ol) {
-  list-style-type: decimal;
-}
-
-:deep(.vditor-reset ol ol ol) {
-  list-style-type: decimal;
-}
-
-/* 无序列表样式 */
-:deep(.vditor-reset ul) {
-  list-style-type: disc;
-  padding-left: 2em;
-}
-
-:deep(.vditor-reset ul ul) {
-  list-style-type: circle;
-}
-
-:deep(.vditor-reset ul ul ul) {
-  list-style-type: square;
-}
-
-/* 预览模式列表样式 */
-:deep(.vditor-preview ol) {
-  list-style-type: decimal;
-  padding-left: 2em;
-}
-
-:deep(.vditor-preview ol ol) {
-  list-style-type: decimal;
-}
-
-:deep(.vditor-preview ol ol ol) {
-  list-style-type: decimal;
-}
-
-:deep(.vditor-preview ul) {
-  list-style-type: disc;
-  padding-left: 2em;
-}
-
-:deep(.vditor-preview ul ul) {
-  list-style-type: circle;
-}
-
-:deep(.vditor-preview ul ul ul) {
-  list-style-type: square;
-}
-
-/* 确保即时渲染模式的列表也正确显示 */
-:deep(.vditor-ir ol) {
-  list-style-type: decimal;
-  padding-left: 2em;
-}
-
-:deep(.vditor-ir ol ol) {
-  list-style-type: decimal;
-}
-
-:deep(.vditor-ir ol ol ol) {
-  list-style-type: decimal;
-}
-
-:deep(.vditor-ir ul) {
-  list-style-type: disc;
-  padding-left: 2em;
-}
-
-:deep(.vditor-ir ul ul) {
-  list-style-type: circle;
-}
-
-:deep(.vditor-ir ul ul ul) {
-  list-style-type: square;
-}
-
-/* 制表符样式支持 */
-:deep(.vditor-reset) {
-  tab-size: 4;
-  -moz-tab-size: 4;
-}
-
-:deep(.vditor-ir) {
-  tab-size: 4;
-  -moz-tab-size: 4;
-}
-
-:deep(.vditor-sv) {
-  tab-size: 4;
-  -moz-tab-size: 4;
-}
-
-:deep(.vditor-wysiwyg) {
-  tab-size: 4;
-  -moz-tab-size: 4;
-}
-
-/* 复制格式菜单样式 */
-#copyFormatMenu {
-  min-width: 180px;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-  transition: opacity 0.2s ease-in-out, transform 0.2s ease-in-out;
-  transform-origin: top left;
-}
-
-#copyFormatMenu div {
-  transition: background-color 0.15s ease-in-out;
-}
-
-/* 通知提示动画 */
-@keyframes fadeInOut {
-  0% {
-    opacity: 0;
-    transform: translateY(-10px);
-  }
-  10% {
-    opacity: 1;
-    transform: translateY(0);
-  }
-  90% {
-    opacity: 1;
-    transform: translateY(0);
-  }
-  100% {
-    opacity: 0;
-    transform: translateY(-10px);
-  }
 }
 
 .notification-toast {
-  animation: fadeInOut 3s ease-in-out forwards;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  animation: slideIn 0.3s ease-out;
 }
 
-/* 添加多级列表样式支持 */
-/* 有序列表样式 */
+@keyframes slideIn {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
 </style>

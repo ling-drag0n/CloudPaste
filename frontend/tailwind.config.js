@@ -18,7 +18,7 @@ export default {
           200: "#bae6fd",
           300: "#7dd3fc",
           400: "#38bdf8",
-          500: "var(--color-primary-500, #0ea5e9)",
+          500: "#3b82f6",
           600: "#0284c7",
           700: "#0369a1",
           800: "#075985",
@@ -38,13 +38,25 @@ export default {
           900: "#4c1d95",
           950: "#2e1065",
         },
+        // 支持自定义CSS变量的颜色系统
+        "custom-bg": {
+          50: "var(--custom-bg-light, rgb(249 250 251))",
+          900: "var(--custom-bg-dark, rgb(17 24 39))",
+        },
+        "custom-surface": {
+          DEFAULT: "var(--custom-surface-light, rgb(255 255 255))",
+          dark: "var(--custom-surface-dark, rgb(31 41 55))",
+        },
+        "custom-text": {
+          DEFAULT: "var(--custom-text-light, rgb(17 24 39))",
+          dark: "var(--custom-text-dark, rgb(243 244 246))",
+        },
       },
-      spacing: {
-        128: "32rem",
-        144: "36rem",
-      },
+
       gridTemplateColumns: {
         "file-list": "2fr 0.8fr 1fr 0.8fr 0.8fr 1.5fr 0.8fr",
+        "search-result": "2fr 1fr 1fr 1.5fr auto",
+        "search-result-simple": "2fr 1fr auto",
       },
     },
   },

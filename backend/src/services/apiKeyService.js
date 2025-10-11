@@ -1,6 +1,7 @@
-import { DbTables } from "../constants/index.js";
 import { generateRandomString, createErrorResponse } from "../utils/common.js";
-import { ApiStatus } from "../constants/index.js";
+import { ApiStatus, DbTables } from "../constants/index.js";
+import { RepositoryFactory } from "../repositories/index.js";
+import { Permission, PermissionChecker } from "../constants/permissions.js";
 
 /**
  * 检查并删除过期的API密钥
@@ -16,7 +17,12 @@ export async function checkAndDeleteExpiredApiKey(db, key) {
   // 检查过期时间
   if (key.expires_at && new Date(key.expires_at) < now) {
     console.log(`API密钥(${key.id})已过期，自动删除`);
-    await db.prepare(`DELETE FROM ${DbTables.API_KEYS} WHERE id = ?`).bind(key.id).run();
+
+    // 使用 ApiKeyRepository 删除过期密钥
+    const repositoryFactory = new RepositoryFactory(db);
+    const apiKeyRepository = repositoryFactory.getApiKeyRepository();
+
+    await apiKeyRepository.deleteApiKey(key.id);
     return true;
   }
 
@@ -29,32 +35,28 @@ export async function checkAndDeleteExpiredApiKey(db, key) {
  * @returns {Promise<Array>} API密钥列表
  */
 export async function getAllApiKeys(db) {
+  // 使用 ApiKeyRepository
+  const repositoryFactory = new RepositoryFactory(db);
+  const apiKeyRepository = repositoryFactory.getApiKeyRepository();
+
   // 先清理过期的API密钥
-  const now = new Date().toISOString();
-  await db.prepare(`DELETE FROM ${DbTables.API_KEYS} WHERE expires_at IS NOT NULL AND expires_at < ?`).bind(now).run();
+  await apiKeyRepository.deleteExpired();
 
-  // 查询所有密钥，并隐藏完整密钥
-  const keys = await db
-      .prepare(
-          `
-    SELECT 
-      id, 
-      name, 
-      key,
-      SUBSTR(key, 1, 6) || '...' AS key_masked,
-      text_permission, 
-      file_permission, 
-      mount_permission,
-      created_at, 
-      expires_at,
-      last_used
-    FROM ${DbTables.API_KEYS}
-    ORDER BY created_at DESC
-  `
-      )
-      .all();
+  // 获取所有密钥列表
+  const keys = await apiKeyRepository.findAll({ orderBy: "created_at DESC" });
 
-  return keys.results;
+  // 为每个密钥添加掩码字段和权限信息
+  return keys.map((key) => {
+    const permissions = key.permissions || 0;
+
+    return {
+      ...key,
+      key_masked: key.key.substring(0, 6) + "...",
+      permissions, // 位标志权限
+      // 权限描述（用于前端显示）
+      permission_names: PermissionChecker.getPermissionDescriptions(permissions),
+    };
+  });
 }
 
 /**
@@ -78,11 +80,27 @@ export async function createApiKey(db, keyData) {
     }
   }
 
+  // 使用 ApiKeyRepository
+  const repositoryFactory = new RepositoryFactory(db);
+  const apiKeyRepository = repositoryFactory.getApiKeyRepository();
+
+  // 检查名称是否已存在
+  const nameExists = await apiKeyRepository.existsByName(keyData.name.trim());
+  if (nameExists) {
+    throw new Error("密钥名称已存在");
+  }
+
   // 生成唯一ID
   const id = crypto.randomUUID();
 
   // 生成API密钥，如果有自定义密钥则使用自定义密钥
   const key = keyData.custom_key ? keyData.custom_key : generateRandomString(12);
+
+  // 检查密钥是否已存在
+  const keyExists = await apiKeyRepository.existsByKey(key);
+  if (keyExists) {
+    throw new Error("密钥已存在，请重新生成");
+  }
 
   // 处理过期时间，默认为1天后
   const now = new Date();
@@ -103,36 +121,42 @@ export async function createApiKey(db, keyData) {
     throw new Error("无效的过期时间");
   }
 
-  // 对text_permission和file_permission提供默认值
-  const textPermission = keyData.text_permission === true ? 1 : 0;
-  const filePermission = keyData.file_permission === true ? 1 : 0;
-  const mountPermission = keyData.mount_permission === true ? 1 : 0;
+  // 直接使用传入的位标志权限
+  const permissions = keyData.permissions || 0;
 
-  // 创建时间
-  const createdAt = now.toISOString();
+  // 验证权限值的有效性
+  if (typeof permissions !== "number" || permissions < 0) {
+    throw new Error("权限值必须是非负整数");
+  }
 
-  // 插入到数据库
-  await db
-      .prepare(
-          `
-    INSERT INTO ${DbTables.API_KEYS} (id, name, key, text_permission, file_permission, mount_permission, expires_at, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `
-      )
-      .bind(id, keyData.name.trim(), key, textPermission, filePermission, mountPermission, expiresAt.toISOString(), createdAt)
-      .run();
+  // 准备API密钥数据
+  const apiKeyData = {
+    id,
+    name: keyData.name.trim(),
+    key,
+    permissions, // 位标志权限
+    role: keyData.role || "GENERAL",
+    basic_path: keyData.basic_path || "/",
+    is_guest: keyData.is_guest || 0,
+    expires_at: expiresAt.toISOString(),
+  };
+
+  // 使用 Repository 创建密钥
+  await apiKeyRepository.createApiKey(apiKeyData);
 
   // 准备响应数据
   return {
     id,
-    name: keyData.name.trim(),
+    name: apiKeyData.name,
     key,
-    key_masked: key.substring(0, 6) + "...", // 前端期望的密钥掩码
-    text_permission: textPermission === 1,
-    file_permission: filePermission === 1,
-    mount_permission: mountPermission === 1,
-    created_at: createdAt,
-    expires_at: expiresAt.toISOString(),
+    key_masked: key.substring(0, 6) + "...",
+    permissions: apiKeyData.permissions, // 位标志权限
+    role: apiKeyData.role,
+    basic_path: apiKeyData.basic_path,
+    is_guest: apiKeyData.is_guest,
+    permission_names: PermissionChecker.getPermissionDescriptions(apiKeyData.permissions),
+    created_at: apiKeyData.created_at,
+    expires_at: apiKeyData.expires_at,
   };
 }
 
@@ -144,9 +168,12 @@ export async function createApiKey(db, keyData) {
  * @returns {Promise<void>}
  */
 export async function updateApiKey(db, id, updateData) {
-  // 检查密钥是否存在
-  const keyExists = await db.prepare(`SELECT id, name, key FROM ${DbTables.API_KEYS} WHERE id = ?`).bind(id).first();
+  // 使用 ApiKeyRepository
+  const repositoryFactory = new RepositoryFactory(db);
+  const apiKeyRepository = repositoryFactory.getApiKeyRepository();
 
+  // 检查密钥是否存在
+  const keyExists = await apiKeyRepository.findById(id);
   if (!keyExists) {
     throw new Error("密钥不存在");
   }
@@ -158,70 +185,50 @@ export async function updateApiKey(db, id, updateData) {
 
   // 检查名称是否已存在（排除当前密钥）
   if (updateData.name && updateData.name !== keyExists.name) {
-    const nameExists = await db.prepare(`SELECT id FROM ${DbTables.API_KEYS} WHERE name = ? AND id != ?`).bind(updateData.name.trim(), id).first();
-
+    const nameExists = await apiKeyRepository.existsByName(updateData.name.trim(), id);
     if (nameExists) {
       throw new Error("密钥名称已存在");
     }
   }
 
   // 处理过期时间
-  let expiresAt = null;
+  let processedUpdateData = { ...updateData };
+
   if (updateData.expires_at === null || updateData.expires_at === "never") {
     // 永不过期 - 使用远未来日期（9999-12-31）
-    expiresAt = new Date("9999-12-31T23:59:59Z");
+    processedUpdateData.expires_at = new Date("9999-12-31T23:59:59Z").toISOString();
   } else if (updateData.expires_at) {
-    expiresAt = new Date(updateData.expires_at);
-
+    const expiresAt = new Date(updateData.expires_at);
     // 确保日期是有效的
     if (isNaN(expiresAt.getTime())) {
       throw new Error("无效的过期时间");
     }
+    processedUpdateData.expires_at = expiresAt.toISOString();
   }
 
-  // 构建更新 SQL
-  const updates = [];
-  const params = [];
-
-  // 只更新提供的字段
-  if (updateData.name !== undefined) {
-    updates.push("name = ?");
-    params.push(updateData.name.trim());
+  // 验证权限值（如果提供）
+  if (updateData.permissions !== undefined) {
+    if (typeof updateData.permissions !== "number" || updateData.permissions < 0) {
+      throw new Error("权限值必须是非负整数");
+    }
+    processedUpdateData.permissions = updateData.permissions;
   }
 
-  if (updateData.text_permission !== undefined) {
-    updates.push("text_permission = ?");
-    params.push(updateData.text_permission ? 1 : 0);
+  // 清理名称
+  if (processedUpdateData.name !== undefined) {
+    processedUpdateData.name = processedUpdateData.name.trim();
   }
 
-  if (updateData.file_permission !== undefined) {
-    updates.push("file_permission = ?");
-    params.push(updateData.file_permission ? 1 : 0);
-  }
+  // 检查是否有有效的更新字段
+  const validFields = ["name", "permissions", "role", "basic_path", "is_guest", "expires_at"];
+  const hasValidUpdates = validFields.some((field) => processedUpdateData[field] !== undefined);
 
-  if (updateData.mount_permission !== undefined) {
-    updates.push("mount_permission = ?");
-    params.push(updateData.mount_permission ? 1 : 0);
-  }
-
-  if (expiresAt !== null) {
-    updates.push("expires_at = ?");
-    params.push(expiresAt.toISOString());
-  }
-
-  // 如果没有要更新的字段，直接返回
-  if (updates.length === 0) {
+  if (!hasValidUpdates) {
     throw new Error("没有提供有效的更新字段");
   }
 
-  // 添加 ID 参数
-  params.push(id);
-
-  // 执行更新
-  await db
-      .prepare(`UPDATE ${DbTables.API_KEYS} SET ${updates.join(", ")} WHERE id = ?`)
-      .bind(...params)
-      .run();
+  // 使用 Repository 更新密钥
+  await apiKeyRepository.updateApiKey(id, processedUpdateData);
 }
 
 /**
@@ -231,15 +238,18 @@ export async function updateApiKey(db, id, updateData) {
  * @returns {Promise<void>}
  */
 export async function deleteApiKey(db, id) {
-  // 检查密钥是否存在
-  const keyExists = await db.prepare(`SELECT id FROM ${DbTables.API_KEYS} WHERE id = ?`).bind(id).first();
+  // 使用 ApiKeyRepository
+  const repositoryFactory = new RepositoryFactory(db);
+  const apiKeyRepository = repositoryFactory.getApiKeyRepository();
 
+  // 检查密钥是否存在
+  const keyExists = await apiKeyRepository.findById(id);
   if (!keyExists) {
     throw new Error("密钥不存在");
   }
 
   // 删除密钥
-  await db.prepare(`DELETE FROM ${DbTables.API_KEYS} WHERE id = ?`).bind(id).run();
+  await apiKeyRepository.deleteApiKey(id);
 }
 
 /**
@@ -251,16 +261,85 @@ export async function deleteApiKey(db, id) {
 export async function getApiKeyByKey(db, key) {
   if (!key) return null;
 
-  const result = await db
-      .prepare(
-          `SELECT id, name, key, text_permission, file_permission, mount_permission, expires_at, last_used
-       FROM ${DbTables.API_KEYS}
-       WHERE key = ?`
-      )
-      .bind(key)
-      .first();
+  // 使用 ApiKeyRepository
+  const repositoryFactory = new RepositoryFactory(db);
+  const apiKeyRepository = repositoryFactory.getApiKeyRepository();
 
-  return result;
+  return await apiKeyRepository.findByKey(key);
+}
+
+/**
+ * 根据API密钥的基本路径筛选可访问的挂载点
+ * @param {D1Database} db - D1数据库实例
+ * @param {string} basicPath - API密钥的基本路径
+ * @returns {Promise<Array>} 可访问的挂载点列表
+ */
+export async function getAccessibleMountsByBasicPath(db, basicPath) {
+  // 使用 Repository 获取数据
+  const repositoryFactory = new RepositoryFactory(db);
+  const mountRepository = repositoryFactory.getMountRepository();
+  const s3ConfigRepository = repositoryFactory.getS3ConfigRepository();
+
+  // 获取所有活跃的挂载点
+  const allMounts = await mountRepository.findMany(DbTables.STORAGE_MOUNTS, { is_active: 1 }, { orderBy: "sort_order ASC, name ASC" });
+
+  if (!allMounts || allMounts.length === 0) return [];
+
+  // 为每个挂载点获取S3配置信息
+  const mountsWithS3Info = await Promise.all(
+    allMounts.map(async (mount) => {
+      if (mount.storage_type === "S3" && mount.storage_config_id) {
+        const s3Config = await s3ConfigRepository.findById(mount.storage_config_id);
+        return {
+          ...mount,
+          is_public: s3Config?.is_public || 0,
+        };
+      }
+      return {
+        ...mount,
+        is_public: 1, // 非S3类型默认为公开
+      };
+    })
+  );
+
+  // 根据基本路径和S3配置公开性筛选可访问的挂载点
+  const inaccessibleMounts = []; // 收集无法访问的挂载点信息
+  const accessibleMounts = mountsWithS3Info.filter((mount) => {
+    // 首先检查S3配置的公开性
+    // 对于S3类型的挂载点，必须使用公开的S3配置
+    if (mount.storage_type === "S3" && mount.is_public !== 1) {
+      inaccessibleMounts.push(mount.name);
+      return false;
+    }
+
+    // 然后检查路径权限
+    const normalizedBasicPath = basicPath === "/" ? "/" : basicPath.replace(/\/+$/, "");
+    const normalizedMountPath = mount.mount_path.replace(/\/+$/, "") || "/";
+
+    // 情况1：基本路径是根路径，允许访问所有公开配置的挂载点
+    if (normalizedBasicPath === "/") {
+      return true;
+    }
+
+    // 情况2：基本路径允许访问挂载点路径（基本路径是挂载点的父级或相同）
+    if (normalizedMountPath === normalizedBasicPath || normalizedMountPath.startsWith(normalizedBasicPath + "/")) {
+      return true;
+    }
+
+    // 情况3：挂载点路径是基本路径的父级（基本路径是挂载点的子目录）
+    if (normalizedBasicPath.startsWith(normalizedMountPath + "/")) {
+      return true;
+    }
+
+    return false;
+  });
+
+  // 如果有无法访问的挂载点，统一输出一条日志
+  if (inaccessibleMounts.length > 0) {
+    console.log(`API密钥用户无法访问 ${inaccessibleMounts.length} 个非公开S3配置的挂载点: ${inaccessibleMounts.join(", ")}`);
+  }
+
+  return accessibleMounts;
 }
 
 /**
@@ -270,6 +349,9 @@ export async function getApiKeyByKey(db, key) {
  * @returns {Promise<void>}
  */
 export async function updateApiKeyLastUsed(db, id) {
-  const now = new Date().toISOString();
-  await db.prepare(`UPDATE ${DbTables.API_KEYS} SET last_used = ? WHERE id = ?`).bind(now, id).run();
+  // 使用 ApiKeyRepository
+  const repositoryFactory = new RepositoryFactory(db);
+  const apiKeyRepository = repositoryFactory.getApiKeyRepository();
+
+  await apiKeyRepository.updateLastUsed(id);
 }

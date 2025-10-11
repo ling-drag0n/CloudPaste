@@ -2,8 +2,5 @@
  * 中间件导出文件
  */
 
-import { authMiddleware } from "./authMiddleware.js";
-import { apiKeyMiddleware, apiKeyTextMiddleware, apiKeyFileMiddleware } from "./apiKeyMiddleware.js";
-
-export { authMiddleware } from "./authMiddleware.js";
-export { apiKeyMiddleware, apiKeyTextMiddleware, apiKeyFileMiddleware } from "./apiKeyMiddleware.js";
+// 导出统一认证网关中间件（唯一的权限系统）
+export { authGateway } from "./authGatewayMiddleware.js";

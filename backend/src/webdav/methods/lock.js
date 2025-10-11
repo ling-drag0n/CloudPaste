@@ -1,106 +1,158 @@
 /**
- * 处理WebDAV LOCK请求--------------------未实现！！
- * 提供基本的资源锁定功能，主要用于提高Windows客户端兼容性
+ * 处理WebDAV LOCK请求
+ * 创建或刷新文件/目录的锁定
+ * 遵循RFC 4918标准，支持exclusive write locks
  */
-import { createWebDAVErrorResponse } from "../utils/errorUtils.js";
-import { findMountPointByPath, normalizeS3SubPath, updateMountLastUsed } from "../utils/webdavUtils.js";
-import { clearCacheAfterWebDAVOperation } from "../utils/cacheUtils.js";
-import { v4 as uuidv4 } from "uuid";
+
+import { lockManager } from "../utils/LockManager.js";
+import { parseLockXML, parseTimeoutHeader, parseDepthHeader, buildLockResponseXML, hasLockConflict } from "../utils/lockUtils.js";
+import { handleWebDAVError, createWebDAVErrorResponse } from "../utils/errorUtils.js";
+import { getStandardWebDAVHeaders } from "../utils/headerUtils.js";
+import { HTTPException } from "hono/http-exception";
+import { ApiStatus } from "../../constants/index.js";
 
 /**
  * 处理LOCK请求
  * @param {Object} c - Hono上下文
  * @param {string} path - 请求路径
- * @param {string} userId - 用户ID
- * @param {string} userType - 用户类型 (admin 或 apiKey)
- * @param {D1Database} db - D1数据库实例
+ * @param {string|Object} userId - 用户ID或信息
+ * @param {string} userType - 用户类型
+ * @param {D1Database} db - 数据库实例
+ * @returns {Response} HTTP响应
  */
 export async function handleLock(c, path, userId, userType, db) {
   try {
-    // 获取用户代理判断是否为Windows客户端
-    const userAgent = c.req.header("User-Agent") || "";
-    const isWindowsClient = userAgent.includes("Microsoft") || userAgent.includes("Windows");
+    console.log(`WebDAV LOCK 请求 - 路径: ${path}, 用户类型: ${userType}`);
 
-    // 记录锁定请求信息
-    console.log(`WebDAV LOCK请求: 路径 ${path}, 用户类型: ${userType}, 客户端: ${isWindowsClient ? "Windows" : "其他"}`);
+    // 获取请求头
+    const ifHeader = c.req.header("If");
+    const timeoutHeader = c.req.header("Timeout");
+    const depthHeader = c.req.header("Depth");
 
-    // 使用统一函数查找挂载点
-    const mountResult = await findMountPointByPath(db, path, userId, userType);
+    // 解析超时和深度
+    const timeoutSeconds = parseTimeoutHeader(timeoutHeader);
+    const depth = parseDepthHeader(depthHeader);
 
-    // 处理错误情况
-    if (mountResult.error) {
-      return new Response(mountResult.error.message, {
-        status: mountResult.error.status,
-        headers: { "Content-Type": "text/plain" },
-      });
+    // 确定锁定所有者
+    let owner = "unknown";
+    if (userType === "admin") {
+      owner = `admin:${userId}`;
+    } else if (userType === "apiKey" && typeof userId === "object") {
+      owner = `apiKey:${userId.name || userId.id}`;
     }
 
-    const { mount, subPath } = mountResult;
-
-    // 获取挂载点对应的S3配置
-    const s3Config = await db.prepare("SELECT * FROM s3_configs WHERE id = ?").bind(mount.storage_config_id).first();
-
-    if (!s3Config) {
-      return new Response("存储配置不存在", { status: 404 });
+    // 获取请求体
+    let requestBody = "";
+    try {
+      requestBody = await c.req.text();
+    } catch (error) {
+      console.error("LOCK请求体读取失败:", error);
+      return createWebDAVErrorResponse("无法读取请求体", 400);
     }
 
-    // 判断是文件还是目录
-    const isDirectory = path.endsWith("/");
+    console.log("LOCK请求体:", requestBody);
 
-    // 规范化S3子路径
-    const s3SubPath = normalizeS3SubPath(subPath, s3Config, isDirectory);
+    // 检查是否为锁定刷新请求
+    // RFC 4918: 如果有If头且没有请求体，则为刷新请求
+    if (ifHeader && (!requestBody || requestBody.trim() === "")) {
+      return await handleLockRefresh(c, path, ifHeader, timeoutSeconds);
+    }
 
-    // 生成一个唯一的锁定令牌
-    const lockToken = `opaquelocktoken:${uuidv4()}`;
+    // 解析XML请求体
+    let lockRequest;
+    try {
+      lockRequest = parseLockXML(requestBody);
+    } catch (error) {
+      console.error("LOCK请求解析失败:", error);
+      return createWebDAVErrorResponse("无效的LOCK请求格式", 400);
+    }
 
-    // 获取请求中的超时设置
-    const timeoutHeader = c.req.header("Timeout") || "Second-3600";
-    const timeoutValue = timeoutHeader.includes("Second-") ? parseInt(timeoutHeader.split("Second-")[1]) || 3600 : 3600; // 默认锁定1小时
+    console.log("解析的LOCK请求:", lockRequest);
 
-    // 如果将来要实际存储锁定信息，这里需要添加代码
-    // 目前只是生成锁定响应
+    // 检查现有锁定
+    const existingLock = lockManager.getLockByPath(path);
+    if (existingLock) {
+      // 检查锁定冲突
+      if (hasLockConflict(existingLock, lockRequest.scope)) {
+        console.log(`LOCK冲突 - 路径: ${path}, 现有锁定: ${existingLock.scope} by ${existingLock.owner}`);
+        return createWebDAVErrorResponse("资源已被锁定", 423);
+      }
+    }
 
-    // 清理缓存 - 即使当前并未实际修改文件，还是清理缓存以保持一致性
-    // 注意：实际锁定不会修改文件内容，所以这里清理缓存主要是为了代码一致性
-    await clearCacheAfterWebDAVOperation(db, s3SubPath, s3Config, isDirectory);
+    // 创建新锁定
+    let lockInfo;
+    try {
+      lockInfo = lockManager.createLock(path, lockRequest.owner || owner, timeoutSeconds, depth, lockRequest.scope, lockRequest.type);
+    } catch (error) {
+      console.error("创建锁定失败:", error);
+      if (error instanceof HTTPException) {
+        return createWebDAVErrorResponse(error.message, error.status);
+      }
+      return createWebDAVErrorResponse("创建锁定失败", 500);
+    }
 
-    // 更新挂载点的最后使用时间
-    await updateMountLastUsed(db, mount.id);
+    // 构建响应XML
+    const responseXML = buildLockResponseXML(path, lockInfo);
 
-    // 构建锁定响应XML
-    const lockResponse = `<?xml version="1.0" encoding="utf-8"?>
-<D:prop xmlns:D="DAV:">
-  <D:lockdiscovery>
-    <D:activelock>
-      <D:locktype><D:write/></D:locktype>
-      <D:lockscope><D:exclusive/></D:lockscope>
-      <D:depth>0</D:depth>
-      <D:owner>
-        <D:href>${userType === "admin" ? "admin-user" : "api-key-user"}</D:href>
-      </D:owner>
-      <D:timeout>Second-${timeoutValue}</D:timeout>
-      <D:locktoken>
-        <D:href>${lockToken}</D:href>
-      </D:locktoken>
-      <D:lockroot>
-        <D:href>/dav${path}</D:href>
-      </D:lockroot>
-    </D:activelock>
-  </D:lockdiscovery>
-</D:prop>`;
+    console.log(`LOCK成功 - 路径: ${path}, 令牌: ${lockInfo.token}, 超时: ${timeoutSeconds}秒`);
 
-    // 返回锁定响应
-    return new Response(lockResponse, {
+    return new Response(responseXML, {
       status: 200,
-      headers: {
-        "Content-Type": "application/xml; charset=utf-8",
-        "Lock-Token": `<${lockToken}>`,
-        // 添加Windows WebDAV客户端可能需要的额外头部
-        ...(isWindowsClient ? { "MS-Author-Via": "DAV" } : {}),
-      },
+      headers: getStandardWebDAVHeaders({
+        customHeaders: {
+          "Content-Type": "application/xml; charset=utf-8",
+          "Lock-Token": `<${lockInfo.token}>`,
+          DAV: "1, 2",
+        },
+      }),
     });
   } catch (error) {
-    console.error("WebDAV LOCK处理错误:", error);
-    return createWebDAVErrorResponse("处理锁定请求时出错", 500);
+    console.error("处理LOCK失败:", error);
+    return handleWebDAVError("LOCK", error);
   }
+}
+
+/**
+ * 处理锁定刷新请求
+ * @param {Object} c - Hono上下文
+ * @param {string} path - 请求路径
+ * @param {string} ifHeader - If头的值
+ * @param {number} timeoutSeconds - 超时时间
+ * @returns {Response} HTTP响应
+ */
+async function handleLockRefresh(c, path, ifHeader, timeoutSeconds) {
+  console.log(`LOCK刷新请求 - 路径: ${path}, If头: ${ifHeader}`);
+
+  // 从If头中提取锁令牌
+  const tokenMatch = ifHeader.match(/<([^>]+)>/);
+  if (!tokenMatch) {
+    return createWebDAVErrorResponse("无效的If头格式", 400);
+  }
+
+  const token = tokenMatch[1];
+
+  // 刷新锁定
+  const refreshedLock = lockManager.refreshLock(token, timeoutSeconds);
+  if (!refreshedLock) {
+    return createWebDAVErrorResponse("锁定不存在或已过期", 412);
+  }
+
+  // 验证路径匹配
+  if (refreshedLock.path !== path) {
+    return createWebDAVErrorResponse("锁定路径不匹配", 409);
+  }
+
+  // 构建响应XML
+  const responseXML = buildLockResponseXML(path, refreshedLock);
+
+  console.log(`LOCK刷新成功 - 路径: ${path}, 令牌: ${token}, 新超时: ${timeoutSeconds}秒`);
+
+  return new Response(responseXML, {
+    status: 200,
+    headers: {
+      "Content-Type": "application/xml; charset=utf-8",
+      "Lock-Token": `<${refreshedLock.token}>`,
+      DAV: "1, 2",
+    },
+  });
 }

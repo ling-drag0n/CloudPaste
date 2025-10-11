@@ -1,0 +1,15 @@
+# CloudPaste - Flexible robots.txt
+# This file is configured to be deployment-agnostic
+# Modify according to your specific deployment needs
+
+User-agent: *
+Allow: /
+
+# Disallow admin routes
+Disallow: /admin
+Disallow: /admin/*
+
+# Disallow API paths
+Disallow: /api/
+Disallow: /api/*
+

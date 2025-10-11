@@ -35,17 +35,13 @@ body {
   }
 
   .card {
-    @apply bg-white rounded-lg shadow-md overflow-hidden transition-colors duration-200 dark:bg-gray-800 dark:border-gray-700;
+    @apply bg-custom-surface rounded-lg shadow-md overflow-hidden transition-colors duration-200 dark:bg-custom-surface-dark dark:border-gray-700;
   }
 }
 
 /* 暗色模式样式通过 class 控制，而不是媒体查询 */
 .dark {
   color-scheme: dark;
-}
-
-.dark body {
-  @apply bg-gray-900 text-gray-100;
 }
 
 /* 移动设备优化 */

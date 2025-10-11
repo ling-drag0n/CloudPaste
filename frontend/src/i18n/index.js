@@ -1,6 +1,6 @@
 import { createI18n } from "vue-i18n";
-import zhCN from "./locales/zh-CN";
-import enUS from "./locales/en-US";
+import zhCN from "./locales/zh-CN/index.js";
+import enUS from "./locales/en-US/index.js";
 
 // 获取浏览器语言设置
 const getBrowserLanguage = () => {
@@ -47,6 +47,7 @@ export const debugI18n = () => {
       当前语言: i18n.global.locale.value,
       回退语言: i18n.global.fallbackLocale.value,
       可用语言: Object.keys(i18n.global.messages.value),
+      模块化结构: "已启用",
     });
   }
 };

@@ -21,7 +21,7 @@ CREATE TABLE pastes (
   password TEXT,
   expires_at DATETIME,
   max_views INTEGER,
-  views INTEGER DEFAULT 0,
+  views INTEGER DEFAULT 0,  
   created_by TEXT,                     -- 创建者标识（管理员ID或API密钥ID）
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -31,6 +31,8 @@ CREATE TABLE pastes (
 CREATE INDEX idx_pastes_slug ON pastes(slug);
 CREATE INDEX idx_pastes_created_at ON pastes(created_at DESC);
 CREATE INDEX idx_pastes_created_by ON pastes(created_by);    -- 添加创建者索引
+
+
 
 -- 创建admins表 - 存储管理员信息
 CREATE TABLE admins (
@@ -50,17 +52,18 @@ CREATE TABLE admin_tokens (
   FOREIGN KEY (admin_id) REFERENCES admins(id) ON DELETE CASCADE
 );
 
--- 创建api_keys表 - 存储API密钥
+-- 创建api_keys表 - 存储API密钥（位标志权限系统）
 CREATE TABLE api_keys (
   id TEXT PRIMARY KEY,
   name TEXT UNIQUE NOT NULL,
   key TEXT UNIQUE NOT NULL,
-  text_permission BOOLEAN DEFAULT 0,
-  file_permission BOOLEAN DEFAULT 0,
-  mount_permission BOOLEAN DEFAULT 0,
+  permissions INTEGER DEFAULT 0,        -- 位标志权限（替代布尔字段）
+  role TEXT DEFAULT 'GENERAL',          -- 用户角色：GUEST/GENERAL/ADMIN
+  basic_path TEXT DEFAULT '/',
+  is_guest BOOLEAN DEFAULT 0,           -- 是否为访客（免密访问）
   last_used DATETIME,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  expires_at DATETIME NOT NULL -- 默认一天后过期
+  expires_at DATETIME NOT NULL
 );
 
 -- 创建s3_configs表 - 存储S3配置信息
@@ -82,41 +85,53 @@ CREATE TABLE s3_configs (
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   last_used DATETIME,                  -- 最后使用时间
   admin_id TEXT,                       -- 关联的管理员ID
+  custom_host TEXT,                    -- 自定义域名/CDN域名
+  signature_expires_in INTEGER DEFAULT 3600, -- 签名有效期（秒）
   FOREIGN KEY (admin_id) REFERENCES admins(id) ON DELETE CASCADE
 );
 
--- 创建files表 - 存储已上传文件的元数据
+-- 创建files表 - 存储已上传文件的元数据（支持多存储类型）
 CREATE TABLE files (
   id TEXT PRIMARY KEY,
+  slug TEXT UNIQUE NOT NULL,           -- 保持现有slug机制
   filename TEXT NOT NULL,              -- 原始文件名
-  storage_path TEXT NOT NULL,          -- S3存储路径
-  s3_url TEXT,                         -- 完整的S3访问URL（可选，可由storage_path生成）
+
+  -- 存储引用（支持多存储类型）
+  storage_config_id TEXT NOT NULL,     -- 存储配置ID（S3/WebDAV/Local等）
+  storage_type TEXT NOT NULL,          -- 存储类型标识
+  storage_path TEXT NOT NULL,          -- 存储中的实际路径
+  file_path TEXT,                      -- 文件系统路径（可选，用于从文件系统创建的分享）
+
+  -- 文件元数据
   mimetype TEXT NOT NULL,              -- 文件MIME类型
-  size INTEGER NOT NULL,               -- 文件大小（字节）
-  s3_config_id TEXT NOT NULL,          -- 使用的S3配置ID
-  slug TEXT UNIQUE NOT NULL,           -- 用于访问文件的短链接
+  size INTEGER NOT NULL,               -- 文件大小
+  etag TEXT,                           -- 文件ETag（完整性验证和缓存）
+
+  -- 分享控制
   remark TEXT,                         -- 文件备注
-  password TEXT,                       -- 可选密码保护
+  password TEXT,                       -- 密码保护
   expires_at DATETIME,                 -- 过期时间
   max_views INTEGER,                   -- 最大查看次数
   views INTEGER DEFAULT 0,             -- 当前查看次数
-  etag TEXT,                           -- S3 ETag（用于验证）
-  created_by TEXT,                     -- 创建者标识（可选，用于多用户系统）
-  use_proxy BOOLEAN DEFAULT 1,         -- 是否使用Worker代理访问（1=是，0=否）
+  use_proxy BOOLEAN DEFAULT 0,         -- 是否使用代理访问
+
+  -- 元数据
+  created_by TEXT,                     -- 创建者
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (s3_config_id) REFERENCES s3_configs(id) ON DELETE CASCADE
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
 -- 添加索引提升查询性能
 CREATE INDEX idx_files_slug ON files(slug);
-CREATE INDEX idx_files_s3_config_id ON files(s3_config_id);
+CREATE INDEX idx_files_storage_config_id ON files(storage_config_id);
+CREATE INDEX idx_files_storage_type ON files(storage_type);
+CREATE INDEX idx_files_file_path ON files(file_path);
 CREATE INDEX idx_files_created_at ON files(created_at);
 CREATE INDEX idx_files_expires_at ON files(expires_at);
 
 -- 创建file_passwords表 - 存储文件密码
 CREATE TABLE file_passwords (
-  file_id TEXT NOT NULL,
+  file_id TEXT PRIMARY KEY,
   plain_password TEXT NOT NULL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -125,7 +140,7 @@ CREATE TABLE file_passwords (
 
 -- 创建paste_passwords表 - 存储文本密码
 CREATE TABLE paste_passwords (
-  paste_id TEXT NOT NULL,
+  paste_id TEXT PRIMARY KEY,
   plain_password TEXT NOT NULL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -134,10 +149,14 @@ CREATE TABLE paste_passwords (
 
 -- 创建system_settings表 - 存储系统设置
 CREATE TABLE system_settings (
-  id TEXT PRIMARY KEY,
-  key TEXT NOT NULL,
+  key TEXT PRIMARY KEY,
   value TEXT NOT NULL,
   description TEXT,
+  type TEXT DEFAULT 'string',              -- 设置值类型：string, number, bool, select
+  group_id INTEGER DEFAULT 1,              -- 分组ID：1=全局设置, 3=WebDAV设置
+  options TEXT,                            -- JSON格式的选项配置（用于select类型）
+  sort_order INTEGER DEFAULT 0,            -- 在分组内的排序顺序
+  flags INTEGER DEFAULT 0,                
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -154,6 +173,10 @@ CREATE TABLE storage_mounts (
   created_by TEXT NOT NULL,             -- 创建者标识
   sort_order INTEGER DEFAULT 0,         -- 显示排序顺序
   cache_ttl INTEGER DEFAULT 300,        -- 缓存时间(秒)，提高性能
+  web_proxy BOOLEAN DEFAULT 0,          -- 网页预览、下载和直接链接是否通过中转
+  webdav_policy TEXT DEFAULT '302_redirect', -- WebDAV策略：'302_redirect' 或 'native_proxy'
+  enable_sign BOOLEAN DEFAULT 0,        -- 是否启用代理签名
+  sign_expires INTEGER DEFAULT NULL,    -- 签名过期时间（秒），NULL表示使用全局设置
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   last_used DATETIME                    -- 最后使用时间
@@ -171,10 +194,11 @@ CREATE INDEX idx_storage_mounts_sort_order ON storage_mounts(sort_order);
 -- 注意: 这是SHA-256哈希后的密码，实际部署时应更改
 INSERT INTO admins (id, username, password)
 VALUES (
-  '00000000-0000-0000-0000-000000000000', 
+  '00000000-0000-0000-0000-000000000000',
   'admin',
   '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9'  -- SHA-256('admin123')
 );
+
 
 -- 创建示例文本分享（可选，仅用于测试）
 INSERT INTO pastes (id, slug, content, remark, created_at)
@@ -188,17 +212,19 @@ VALUES (
 
 -- 插入示例S3配置（加密密钥仅作示例，实际应用中应当由系统加密存储）
 INSERT INTO s3_configs (
-  id, 
-  name, 
-  provider_type, 
-  endpoint_url, 
-  bucket_name, 
-  region, 
-  access_key_id, 
-  secret_access_key, 
+  id,
+  name,
+  provider_type,
+  endpoint_url,
+  bucket_name,
+  region,
+  access_key_id,
+  secret_access_key,
   path_style,
   default_folder,
-  admin_id
+  admin_id,
+  custom_host,
+  signature_expires_in
 ) VALUES (
   '22222222-2222-2222-2222-222222222222',
   'Cloudflare R2存储',
@@ -210,5 +236,7 @@ INSERT INTO s3_configs (
   'encrypted:secret-access-key-placeholder',
   0,
   'uploads/',
-  '00000000-0000-0000-0000-000000000000'
-); 
+  '00000000-0000-0000-0000-000000000000',
+  NULL,
+  3600
+);

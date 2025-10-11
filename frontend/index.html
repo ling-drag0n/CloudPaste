@@ -11,13 +11,39 @@
     <link rel="apple-touch-icon" href="/icons-32.png" />
     <link rel="manifest" href="/manifest.json" />
     <title>CloudPaste - 安全分享您的内容</title>
-    <!-- 运行时配置文件，添加时间戳防止缓存 -->
+    <!-- 运行时配置文件，使用document.write确保同步加载 -->
     <script>
-        // 添加时间戳防止缓存config.js
+        // 使用document.write确保config.js在main.js之前同步加载
         document.write('<script src="/config.js?t=' + new Date().getTime() + '"><\/script>');
     </script>
 </head>
 <body>
+<!-- SVG图标定义 -->
+<div style="display: none">
+    <svg xmlns="http://www.w3.org/2000/svg">
+        <!-- 下载图标 -->
+        <symbol id="icon-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+        </symbol>
+
+        <!-- 链接图标 -->
+        <symbol id="icon-link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101" />
+            <path d="M10.172 13.828a4 4 0 015.656 0l4 4a4 4 0 01-5.656 5.656l-1.102-1.101" />
+        </symbol>
+
+        <!-- 编辑图标 -->
+        <symbol id="icon-edit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+        </symbol>
+
+        <!-- 删除图标 -->
+        <symbol id="icon-delete" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+        </symbol>
+    </svg>
+</div>
+
 <div id="app"></div>
 <script type="module" src="/src/main.js"></script>
 </body>

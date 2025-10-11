@@ -3,11 +3,14 @@ FROM node:18.18-alpine AS build
 
 WORKDIR /app
 
-# 复制前端package.json和锁文件
-COPY frontend/package*.json ./
+# 安装必要的系统依赖
+RUN apk add --no-cache git
 
-# 安装依赖
-RUN npm ci --cache /tmp/npm-cache
+# 复制前端package.json
+COPY frontend/package.json ./
+
+# 安装依赖 - 使用npm install重新生成lock文件
+RUN npm install --cache /tmp/npm-cache
 
 # 复制前端源代码
 COPY frontend/ ./

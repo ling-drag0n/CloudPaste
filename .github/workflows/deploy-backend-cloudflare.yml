@@ -63,7 +63,7 @@ jobs:
             DATABASE_ID=$EXISTING_DB
           else
             CREATE_OUTPUT=$(npx wrangler d1 create cloudpaste-db 2>&1)
-          
+
             if echo "$CREATE_OUTPUT" | grep -q "Successfully created DB"; then
               DATABASE_ID=$(echo "$CREATE_OUTPUT" | grep -oP "database_id = \"\K[^\"]+")
               if [ -z "$DATABASE_ID" ]; then
@@ -72,7 +72,7 @@ jobs:
             else
               LIST_OUTPUT=$(npx wrangler d1 list --json 2>/dev/null || echo "[]")
               DATABASE_ID=$(echo "$LIST_OUTPUT" | jq -r '.[] | select(.name=="cloudpaste-db") | .uuid')
-          
+
               if [ -z "$DATABASE_ID" ]; then
                 echo "❌ 无法创建或找到D1数据库"
                 exit 1
@@ -101,13 +101,13 @@ jobs:
           if grep -q "ENCRYPTION_SECRET =" wrangler.toml; then
             echo "⚠️ 检测到wrangler.toml中存在硬编码的ENCRYPTION_SECRET"
             echo "为确保GitHub Actions的密钥设置生效，将从wrangler.toml中移除硬编码密钥"
-          
+
             # 临时备份wrangler.toml
             cp wrangler.toml wrangler.toml.bak
-          
+
             # 移除硬编码的ENCRYPTION_SECRET行
             sed -i '/ENCRYPTION_SECRET =/d' wrangler.toml
-          
+
             echo "✅ 已从wrangler.toml中移除硬编码的ENCRYPTION_SECRET"
           else
             echo "✅ wrangler.toml中未检测到硬编码的ENCRYPTION_SECRET"
@@ -147,17 +147,17 @@ jobs:
               echo "生成随机ENCRYPTION_SECRET值"
               ENCRYPTION_VALUE=$(openssl rand -base64 32)
             fi
-          
+
             # 设置密钥到Worker
             set +e
             echo "正在设置ENCRYPTION_SECRET..."
             SECRET_PUT_OUTPUT=$(echo "$ENCRYPTION_VALUE" | npx wrangler secret put ENCRYPTION_SECRET 2>&1)
             SECRET_RESULT=$?
             set -e
-          
+
             echo "Secret put 输出:"
             echo "$SECRET_PUT_OUTPUT" | grep -v "Please update to the latest version"
-          
+
             if [ $SECRET_RESULT -ne 0 ]; then
               # 如果错误是由于密钥已存在导致的，视为成功
               if echo "$SECRET_PUT_OUTPUT" | grep -q -E "(already in use|already exists|conflict)"; then
@@ -167,7 +167,7 @@ jobs:
                 set +e
                 FINAL_CHECK=$(npx wrangler secret list 2>&1)
                 set -e
-          
+
                 if echo "$FINAL_CHECK" | grep -q "ENCRYPTION_SECRET"; then
                   echo "虽然设置密钥失败，但密钥似乎已存在于Worker中，继续执行"
                 else
@@ -182,12 +182,11 @@ jobs:
           fi
 
       - name: Deploy to Cloudflare Workers
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: "./backend"
-          command: deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx wrangler deploy 2>&1 | sed -E 's/https:\/\/[a-zA-Z0-9.-]*\.(workers|pages)\.dev/https:\/\/[REDACTED].\1.dev/g'
 
       - name: Display Success Information
         if: steps.check-deploy-button.outputs.is_deploy_button == 'true' && success()

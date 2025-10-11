@@ -16,8 +16,10 @@ import crypto from "crypto"; // 添加用于生成随机文件名
 // 项目依赖
 import { checkAndInitDatabase } from "./src/utils/database.js";
 import app from "./src/index.js";
-import { handleFileDownload } from "./src/routes/fileViewRoutes.js";
 import { ApiStatus } from "./src/constants/index.js";
+
+import { setExpressWebDAVHeaders } from "./src/webdav/utils/headerUtils.js";
+import { getWebDAVConfig } from "./src/webdav/auth/config/WebDAVConfig.js";
 
 // ES模块兼容性处理：获取__dirname
 const __filename = fileURLToPath(import.meta.url);
@@ -120,6 +122,57 @@ class SQLiteAdapter {
     };
   }
 
+  // batch方法
+  async batch(statements) {
+    logMessage("info", `执行批处理操作，共${statements.length}条语句`);
+
+    // 开始事务
+    try {
+      // 开始事务
+      await this.db.exec("BEGIN TRANSACTION");
+
+      // 执行所有语句
+      const results = [];
+      for (const statement of statements) {
+        if (typeof statement === "string") {
+          // 如果是纯SQL字符串
+          const result = await this.db.exec(statement);
+          results.push({ success: true, result });
+        } else if (statement.sql && Array.isArray(statement.params)) {
+          // 如果是{sql, params}格式
+          const result = await this.db.run(statement.sql, ...statement.params);
+          results.push({ success: true, result });
+        } else if (statement.sql && typeof statement.params === "undefined") {
+          // 只有SQL没有参数
+          const result = await this.db.run(statement.sql);
+          results.push({ success: true, result });
+        } else {
+          // 处理预处理语句的情况
+          const stmt = this.prepare(statement.text || statement.sql);
+          if (statement.params) {
+            stmt.bind(...statement.params);
+          }
+          const result = await stmt.run();
+          results.push(result);
+        }
+      }
+
+      // 提交事务
+      await this.db.exec("COMMIT");
+
+      return results;
+    } catch (error) {
+      // 发生错误，回滚事务
+      logMessage("error", "批处理执行错误，回滚事务:", { error });
+      try {
+        await this.db.exec("ROLLBACK");
+      } catch (rollbackError) {
+        logMessage("error", "事务回滚失败:", { rollbackError });
+      }
+      throw error;
+    }
+  }
+
   // 直接执行SQL语句的方法
   async exec(sql) {
     try {
@@ -184,20 +237,20 @@ const sqliteAdapter = createSQLiteAdapter(dbPath);
 let isDbInitialized = false;
 
 // ==========================================
-// WebDAV支持配置 - 集中WebDAV相关定义
+// WebDAV统一认证系统配置
 // ==========================================
 
-// WebDAV支持的HTTP方法
-const WEBDAV_METHODS = ["GET", "HEAD", "PUT", "POST", "DELETE", "OPTIONS", "PROPFIND", "PROPPATCH", "MKCOL", "COPY", "MOVE", "LOCK", "UNLOCK"];
+// 获取WebDAV配置
+const webdavConfig = getWebDAVConfig();
 
-// CORS配置 - WebDAV方法支持
+// CORS配置
 const corsOptions = {
-  origin: "*", // 允许的域名，如果未设置则允许所有
-  methods: WEBDAV_METHODS.join(","), // 使用上面定义的WebDAV方法
+  origin: "*",
+  methods: webdavConfig.METHODS.join(","),
   credentials: true,
   optionsSuccessStatus: 204,
-  maxAge: 86400, // 缓存预检请求结果24小时
-  exposedHeaders: ["ETag", "Content-Type", "Content-Length", "Last-Modified"],
+  maxAge: 86400,
+  exposedHeaders: webdavConfig.HEADERS["Access-Control-Expose-Headers"],
 };
 
 // ==========================================
@@ -205,7 +258,7 @@ const corsOptions = {
 // ==========================================
 
 // 明确告知Express处理WebDAV方法
-WEBDAV_METHODS.forEach((method) => {
+webdavConfig.METHODS.forEach((method) => {
   server[method.toLowerCase()] = function (path, ...handlers) {
     return server.route(path).all(function (req, res, next) {
       if (req.method === method) {
@@ -217,7 +270,7 @@ WEBDAV_METHODS.forEach((method) => {
 });
 
 // 为WebDAV方法添加直接路由，确保它们能被正确处理
-WEBDAV_METHODS.forEach((method) => {
+webdavConfig.METHODS.forEach((method) => {
   server[method.toLowerCase()]("/dav*", (req, res, next) => {
     logMessage("debug", `直接WebDAV路由处理: ${method} ${req.path}`);
     next();
@@ -230,7 +283,16 @@ WEBDAV_METHODS.forEach((method) => {
 
 // 1. 基础中间件 - CORS和HTTP方法处理
 // ==========================================
-server.use(cors(corsOptions));
+// 智能CORS处理：跳过WebDAV OPTIONS请求和根路径OPTIONS请求，让后续中间件处理
+server.use((req, res, next) => {
+  // 对于WebDAV路径和根路径的OPTIONS请求，跳过CORS自动处理
+  if (req.method === "OPTIONS" && (req.path === "/" || req.path === "/dav" || req.path.startsWith("/dav/"))) {
+    logMessage("debug", `跳过CORS处理: ${req.method} ${req.path}`);
+    return next();
+  }
+  // 其他请求使用标准CORS处理
+  cors(corsOptions)(req, res, next);
+});
 server.use(methodOverride("X-HTTP-Method-Override"));
 server.use(methodOverride("X-HTTP-Method"));
 server.use(methodOverride("X-Method-Override"));
@@ -238,16 +300,19 @@ server.disable("x-powered-by");
 
 // WebDAV基础方法支持
 server.use((req, res, next) => {
-  if (req.path.startsWith("/dav")) {
-    res.setHeader("Access-Control-Allow-Methods", WEBDAV_METHODS.join(","));
-    res.setHeader("Allow", WEBDAV_METHODS.join(","));
+  if (req.path === "/dav" || req.path.startsWith("/dav/")) {
+    // 使用统一的WebDAV头部设置工具
+    setExpressWebDAVHeaders(res);
 
-    // 对于OPTIONS请求，直接响应以支持预检请求
+    // 区分CORS预检请求和WebDAV OPTIONS请求
     if (req.method === "OPTIONS") {
-      // 添加WebDAV特定的响应头
-      res.setHeader("DAV", "1,2");
-      res.setHeader("MS-Author-Via", "DAV");
-      return res.status(204).end();
+      // 检查是否为CORS预检请求
+      const isCORSPreflight = req.headers.origin && req.headers["access-control-request-method"];
+
+      if (isCORSPreflight) {
+        // CORS预检请求：在Express层直接处理
+        return res.status(204).end();
+      }
     }
   }
   next();
@@ -319,31 +384,31 @@ server.use((req, res, next) => {
 
 // 处理原始请求体（XML、二进制等）
 server.use(
-    express.raw({
-      type: ["application/xml", "text/xml", "application/octet-stream"],
-      limit: "1gb", // 设置合理的大小限制
-      verify: (req, res, buf, encoding) => {
-        // 对于WebDAV方法，特别是MKCOL，记录详细信息以便调试
-        if ((req.method === "MKCOL" || req.method === "PUT") && buf && buf.length > 10 * 1024 * 1024) {
-          logMessage("debug", `大型WebDAV ${req.method} 请求体:`, {
+  express.raw({
+    type: ["application/xml", "text/xml", "application/octet-stream"],
+    limit: "5gb",
+    verify: (req, res, buf, encoding) => {
+      // 对于WebDAV方法，特别是MKCOL，记录详细信息以便调试
+      if ((req.method === "MKCOL" || req.method === "PUT") && buf && buf.length > 10 * 1024 * 1024) {
+        logMessage("debug", `大型WebDAV ${req.method} 请求体:`, {
+          contentType: req.headers["content-type"],
+          size: buf ? buf.length : 0,
+        });
+      }
+
+      // 安全检查：检测潜在的异常XML或二进制内容
+      if (buf && req.path.startsWith("/dav") && (req.headers["content-type"] || "").includes("xml") && buf.length > 0) {
+        // 检查是否为有效的XML开头标记，简单验证
+        const xmlStart = buf.slice(0, Math.min(50, buf.length)).toString();
+        if (!xmlStart.trim().startsWith("<?xml") && !xmlStart.trim().startsWith("<")) {
+          logMessage("warn", `可疑的XML请求体: ${req.method} ${req.path} - 内容不以XML标记开头`, {
             contentType: req.headers["content-type"],
-            size: buf ? buf.length : 0,
+            bodyPreview: xmlStart.replace(/[\x00-\x1F\x7F-\xFF]/g, ".").substring(0, 30),
           });
         }
-
-        // 安全检查：检测潜在的异常XML或二进制内容
-        if (buf && req.path.startsWith("/dav") && (req.headers["content-type"] || "").includes("xml") && buf.length > 0) {
-          // 检查是否为有效的XML开头标记，简单验证
-          const xmlStart = buf.slice(0, Math.min(50, buf.length)).toString();
-          if (!xmlStart.trim().startsWith("<?xml") && !xmlStart.trim().startsWith("<")) {
-            logMessage("warn", `可疑的XML请求体: ${req.method} ${req.path} - 内容不以XML标记开头`, {
-              contentType: req.headers["content-type"],
-              bodyPreview: xmlStart.replace(/[\x00-\x1F\x7F-\xFF]/g, ".").substring(0, 30),
-            });
-          }
-        }
-      },
-    })
+      }
+    },
+  })
 );
 
 // 处理请求体大小限制错误
@@ -364,8 +429,8 @@ server.use((err, req, res, next) => {
 
   // 处理multipart/form-data解析错误
   if (
-      err.message &&
-      (err.message.includes("Unexpected end of form") || err.message.includes("Unexpected end of multipart data") || err.message.includes("Multipart: Boundary not found"))
+    err.message &&
+    (err.message.includes("Unexpected end of form") || err.message.includes("Unexpected end of multipart data") || err.message.includes("Multipart: Boundary not found"))
   ) {
     logMessage("error", `Multipart解析错误:`, {
       method: req.method,
@@ -380,7 +445,7 @@ server.use((err, req, res, next) => {
     });
   }
 
-  // 增强：处理内容类型解析错误
+  // 处理内容类型错误
   if (err.status === 415 || (err.message && err.message.includes("content type"))) {
     logMessage("error", `内容类型错误:`, {
       method: req.method,
@@ -398,18 +463,18 @@ server.use((err, req, res, next) => {
 
 // 处理表单数据
 server.use(
-    express.urlencoded({
-      extended: true,
-      limit: "1gb",
-    })
+  express.urlencoded({
+    extended: true,
+    limit: "5gb",
+  })
 );
 
 // 处理JSON请求体
 server.use(
-    express.json({
-      type: ["application/json", "application/json; charset=utf-8", "+json", "*/json"],
-      limit: "1gb",
-    })
+  express.json({
+    type: ["application/json", "application/json; charset=utf-8", "+json", "*/json"],
+    limit: "5gb",
+  })
 );
 
 // 3. WebDAV专用中间件
@@ -417,32 +482,25 @@ server.use(
 // WebDAV请求日志记录
 server.use((req, res, next) => {
   // 仅记录关键WebDAV操作，减少不必要的日志
-  if (["MKCOL", "COPY", "MOVE", "DELETE", "PUT"].includes(req.method) && req.path.startsWith("/dav")) {
+  if (["MKCOL", "COPY", "MOVE", "DELETE", "PUT"].includes(req.method) && (req.path === "/dav" || req.path.startsWith("/dav/"))) {
     logMessage("debug", `关键WebDAV请求: ${req.method} ${req.path}`);
   }
 
   next();
 });
 
-// WebDAV详细处理中间件
+// WebDAV请求日志记录 - 认证由Hono层处理
 server.use("/dav", (req, res, next) => {
   // 明确设置允许的方法
-  res.setHeader("Allow", WEBDAV_METHODS.join(","));
+  res.setHeader("Allow", webdavConfig.METHODS.join(","));
 
-  // 仅在INFO级别记录关键WebDAV请求信息
+  // 记录WebDAV请求信息
   logMessage("info", `WebDAV请求: ${req.method} ${req.path}`, {
     contentType: req.headers["content-type"] || "无",
     contentLength: req.headers["content-length"] || "无",
   });
 
-  // 针对MKCOL方法的特殊处理
-  if (req.method === "MKCOL") {
-    // 仅记录Windows客户端的MKCOL请求
-    if ((req.headers["user-agent"] || "").includes("Microsoft") || (req.headers["user-agent"] || "").includes("Windows")) {
-      logMessage("debug", `Windows客户端的MKCOL请求: ${req.path}`);
-    }
-  }
-
+  // 直接传递给下一个中间件，认证由Hono层的webdavAuthMiddleware处理
   next();
 });
 
@@ -478,38 +536,23 @@ server.use(async (req, res, next) => {
 // 路由处理
 // ==========================================
 
-/**
- * 文件下载路由处理
- * 支持文件下载和预览功能
- */
-server.get("/api/file-download/:slug", async (req, res) => {
-  try {
-    const response = await handleFileDownload(req.params.slug, req.env, createAdaptedRequest(req), true);
-    await convertWorkerResponseToExpress(response, res);
-  } catch (error) {
-    logMessage("error", "文件下载错误:", { error });
-    res.status(ApiStatus.INTERNAL_ERROR).json(createErrorResponse(error, ApiStatus.INTERNAL_ERROR, "文件下载失败"));
-  }
-});
+// 根路径WebDAV OPTIONS兼容性处理器
+// 为1Panel等客户端提供WebDAV能力发现支持
+server.options("/", (req, res) => {
+  // 返回标准WebDAV能力声明，与/dav路径保持一致
+  const headers = {
+    Allow: "OPTIONS, PROPFIND, GET, HEAD, PUT, DELETE, MKCOL, COPY, MOVE, LOCK, UNLOCK, PROPPATCH",
+    DAV: "1, 2",
+    "MS-Author-Via": "DAV",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "OPTIONS, PROPFIND, GET, HEAD, PUT, DELETE, MKCOL, COPY, MOVE, LOCK, UNLOCK, PROPPATCH",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type, Depth, Destination, If, Lock-Token, Overwrite, X-Custom-Auth-Key",
+    "Access-Control-Expose-Headers": "DAV, Lock-Token, MS-Author-Via",
+    "Access-Control-Max-Age": "86400",
+  };
 
-server.get("/api/file-view/:slug", async (req, res) => {
-  try {
-    const response = await handleFileDownload(req.params.slug, req.env, createAdaptedRequest(req), false);
-    await convertWorkerResponseToExpress(response, res);
-  } catch (error) {
-    logMessage("error", "文件预览错误:", { error });
-    res.status(ApiStatus.INTERNAL_ERROR).json(createErrorResponse(error, ApiStatus.INTERNAL_ERROR, "文件预览失败"));
-  }
-});
-
-server.get("/api/office-preview/:slug", async (req, res) => {
-  try {
-    const response = await app.fetch(createAdaptedRequest(req), req.env, {});
-    await convertWorkerResponseToExpress(response, res);
-  } catch (error) {
-    logMessage("error", "Office预览URL生成错误:", { error });
-    res.status(ApiStatus.INTERNAL_ERROR).json(createErrorResponse(error, ApiStatus.INTERNAL_ERROR, "Office预览URL生成失败"));
-  }
+  logMessage("info", "根路径WebDAV OPTIONS请求 - 客户端兼容性支持");
+  res.set(headers).status(200).end();
 });
 
 // 通配符路由 - 处理所有其他API请求
@@ -533,7 +576,15 @@ server.use("*", async (req, res) => {
  * 将Express请求转换为Cloudflare Workers兼容的Request对象
  */
 function createAdaptedRequest(expressReq) {
-  const url = new URL(expressReq.originalUrl, `http://${expressReq.headers.host || "localhost"}`);
+  // 正确处理协议：优先使用X-Forwarded-Proto头部，回退到连接信息
+  const protocol = expressReq.headers["x-forwarded-proto"] || (expressReq.connection && expressReq.connection.encrypted ? "https" : "http");
+
+  // 调试日志：记录协议检测结果
+  if (expressReq.path.includes("/api/file-")) {
+    logMessage("debug", `协议检测 - Path: ${expressReq.path}, X-Forwarded-Proto: ${expressReq.headers["x-forwarded-proto"]}, 最终协议: ${protocol}`);
+  }
+
+  const url = new URL(expressReq.originalUrl, `${protocol}://${expressReq.headers.host || "localhost"}`);
 
   // 获取请求体内容
   let body = undefined;
@@ -589,8 +640,8 @@ function createAdaptedRequest(expressReq) {
       }
       // 如果是XML或二进制数据，使用Buffer
       else if (
-          (contentType.includes("application/xml") || contentType.includes("text/xml") || contentType.includes("application/octet-stream")) &&
-          Buffer.isBuffer(expressReq.body)
+        (contentType.includes("application/xml") || contentType.includes("text/xml") || contentType.includes("application/octet-stream")) &&
+        Buffer.isBuffer(expressReq.body)
       ) {
         body = expressReq.body;
       }
@@ -724,27 +775,65 @@ server.listen(PORT, "0.0.0.0", () => {
  * 内存使用监控和管理函数
  * 定期记录内存使用情况并尝试清理
  */
-function startMemoryMonitoring(interval = 60000) {
+function startMemoryMonitoring(interval = 1200000) {
+  // 简单读取容器内存使用情况
+  const getContainerMemory = () => {
+    try {
+      // 尝试读取cgroup内存使用（优先v2，回退v1）
+      let usage = null,
+        limit = null;
+
+      // cgroup v2
+      if (fs.existsSync("/sys/fs/cgroup/memory.current")) {
+        usage = parseInt(fs.readFileSync("/sys/fs/cgroup/memory.current", "utf8"));
+        const maxContent = fs.readFileSync("/sys/fs/cgroup/memory.max", "utf8").trim();
+        if (maxContent !== "max") limit = parseInt(maxContent);
+      }
+      // cgroup v1
+      else if (fs.existsSync("/sys/fs/cgroup/memory/memory.usage_in_bytes")) {
+        usage = parseInt(fs.readFileSync("/sys/fs/cgroup/memory/memory.usage_in_bytes", "utf8"));
+        const limitValue = parseInt(fs.readFileSync("/sys/fs/cgroup/memory/memory.limit_in_bytes", "utf8"));
+        if (limitValue < Number.MAX_SAFE_INTEGER) limit = limitValue;
+      }
+
+      return usage && limit ? { usage, limit } : null;
+    } catch (error) {
+      return null; // 静默失败，不在容器中或无权限
+    }
+  };
+
   // 记录内存使用情况
   const logMemoryUsage = () => {
     const memUsage = process.memoryUsage();
+    const containerMem = getContainerMemory();
 
-    logMessage("info", "内存使用情况:", {
+    const memoryInfo = {
       rss: `${Math.round(memUsage.rss / 1024 / 1024)} MB`, // 常驻集大小
       heapTotal: `${Math.round(memUsage.heapTotal / 1024 / 1024)} MB`, // 总堆内存
       heapUsed: `${Math.round(memUsage.heapUsed / 1024 / 1024)} MB`, // 已用堆内存
       external: `${Math.round(memUsage.external / 1024 / 1024)} MB`, // 外部内存
       arrayBuffers: memUsage.arrayBuffers ? `${Math.round(memUsage.arrayBuffers / 1024 / 1024)} MB` : "N/A", // Buffer内存
-    });
+    };
 
-    // 当内存使用率高于阈值时，尝试手动触发垃圾回收
-    // 增加对外部内存和ArrayBuffers的检查，以便在文件上传后更好地触发内存回收
-    if (
-        global.gc &&
-        (memUsage.heapUsed / memUsage.heapTotal > 0.85 ||
-            memUsage.external > 30 * 1024 * 1024 || // 外部内存超过30MB
-            (memUsage.arrayBuffers && memUsage.arrayBuffers > 50 * 1024 * 1024)) // ArrayBuffers超过50MB
-    ) {
+    // 如果在容器中，添加容器内存信息
+    if (containerMem) {
+      memoryInfo.container = `${Math.round(containerMem.usage / 1024 / 1024)} MB / ${Math.round(containerMem.limit / 1024 / 1024)} MB`;
+      memoryInfo.containerUsage = `${Math.round((containerMem.usage / containerMem.limit) * 100)}%`;
+    }
+
+    logMessage("info", "内存使用情况:", memoryInfo);
+
+    // 智能垃圾回收：优先使用容器内存，回退到进程内存
+    let shouldGC = false;
+    if (containerMem) {
+      // 容器内存使用率超过85%
+      shouldGC = containerMem.usage / containerMem.limit > 0.85;
+    } else {
+      // 回退到原有逻辑
+      shouldGC = memUsage.heapUsed / memUsage.heapTotal > 0.85 || memUsage.external > 50 * 1024 * 1024 || (memUsage.arrayBuffers && memUsage.arrayBuffers > 50 * 1024 * 1024);
+    }
+
+    if (global.gc && shouldGC) {
       logMessage("info", "检测到内存使用较高，尝试手动垃圾回收");
       global.gc();
     }
