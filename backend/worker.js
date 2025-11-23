@@ -5565,8 +5565,8 @@ export default {
   async fetch(request, env, ctx) {
     try {
       // 初始化数据库
-      await initDatabase(env.DB);
-
+      // await initDatabase(env.DB);
+      await checkAndInitDatabase(env.DB);
       // 检查是否是直接文件下载请求
       const url = new URL(request.url);
       const pathParts = url.pathname.split("/");
