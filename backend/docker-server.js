@@ -233,6 +233,8 @@ logMessage("info", `数据库文件路径: ${dbPath}`);
 // 初始化SQLite适配器
 const sqliteAdapter = createSQLiteAdapter(dbPath);
 let isDbInitialized = false;
+let isInitializing = false;
+let initializationPromise = null;
 
 // ==========================================
 // WebDAV统一认证系统配置
@@ -468,14 +470,32 @@ server.use("/dav", (req, res, next) => {
 // ==========================================
 server.use(async (req, res, next) => {
   try {
+    // 检查并初始化数据库（确保只初始化一次）
     if (!isDbInitialized) {
-      logMessage("info", "首次请求，检查数据库状态...");
-      isDbInitialized = true;
-      try {
-        await sqliteAdapter.init();
-        await checkAndInitDatabase(sqliteAdapter);
-      } catch (error) {
-        logMessage("error", "数据库初始化出错:", { error });
+      if (!isInitializing) {
+        // 开始初始化流程
+        isInitializing = true;
+        logMessage("info", "首次请求，检查数据库状态...");
+        
+        initializationPromise = sqliteAdapter.init()
+          .then(() => checkAndInitDatabase(sqliteAdapter))
+          .then(() => {
+            logMessage("info", "数据库初始化成功");
+            isDbInitialized = true;
+            isInitializing = false;
+          })
+          .catch((error) => {
+            logMessage("error", "数据库初始化失败:", { error });
+            isInitializing = false;
+            initializationPromise = null; // 重置Promise以便下次请求重试
+            // 重置标记以便下次请求重试
+            throw error;
+          });
+      }
+      
+      // 等待初始化完成（包括并发请求）
+      if (initializationPromise) {
+        await initializationPromise;
       }
     }
 

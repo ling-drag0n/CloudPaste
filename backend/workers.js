@@ -4,6 +4,10 @@ import { checkAndInitDatabase } from "./src/utils/database.js";
 
 // 记录数据库是否已初始化的内存标识
 let isDbInitialized = false;
+// 记录数据库初始化是否正在进行中
+let isInitializing = false;
+// 存储初始化Promise，用于等待初始化完成
+let initializationPromise = null;
 
 // 导出Cloudflare Workers请求处理函数
 export default {
@@ -20,15 +24,31 @@ export default {
         ENCRYPTION_SECRET: env.ENCRYPTION_SECRET,
       };
 
-      // 只在第一次请求时检查并初始化数据库
+      // 检查并初始化数据库（确保只初始化一次）
       if (!isDbInitialized) {
-        console.log("首次请求，检查数据库状态...");
-        isDbInitialized = true; // 先设置标记，避免并发请求重复初始化
-        try {
-          await checkAndInitDatabase(env.DB);
-        } catch (error) {
-          console.error("数据库初始化出错:", error);
-          // 即使初始化出错，我们也继续处理请求
+        if (!isInitializing) {
+          // 开始初始化流程
+          isInitializing = true;
+          console.log("首次请求，检查数据库状态...");
+          
+          initializationPromise = checkAndInitDatabase(env.DB)
+            .then(() => {
+              console.log("数据库初始化成功");
+              isDbInitialized = true;
+              isInitializing = false;
+            })
+            .catch((error) => {
+              console.error("数据库初始化失败:", error);
+              isInitializing = false;
+              initializationPromise = null; // 重置Promise以便下次请求重试
+              // 重置标记以便下次请求重试
+              throw error;
+            });
+        }
+        
+        // 等待初始化完成（包括并发请求）
+        if (initializationPromise) {
+          await initializationPromise;
         }
       }
 
