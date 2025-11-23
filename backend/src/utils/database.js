@@ -1506,10 +1506,6 @@ export async function checkAndInitDatabase(db) {
         console.log(`表已存在: ${tableName}`);
       }
     }
-    
-    if (needsTablesCreation) {
-      console.log("检测到缺少以下表，执行表创建...");
-    }
 
     // 如果有表不存在，执行表初始化
     if (needsTablesCreation) {
