@@ -122,10 +122,12 @@ async function createAdminTables(db) {
 async function createStorageTables(db) {
   console.log("创建存储相关表...");
 
-  // 创建 storage_configs
-  await db
-    .prepare(
-      `
+  try {
+    // 创建 storage_configs
+    console.log("创建 storage_configs 表...");
+    await db
+      .prepare(
+        `
       CREATE TABLE IF NOT EXISTS ${DbTables.STORAGE_CONFIGS} (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -141,17 +143,27 @@ async function createStorageTables(db) {
         last_used DATETIME
       )
     `
-    )
-    .run();
-  await db.prepare(`CREATE INDEX IF NOT EXISTS idx_storage_admin ON ${DbTables.STORAGE_CONFIGS}(admin_id)`).run();
-  await db.prepare(`CREATE INDEX IF NOT EXISTS idx_storage_type ON ${DbTables.STORAGE_CONFIGS}(storage_type)`).run();
-  await db.prepare(`CREATE INDEX IF NOT EXISTS idx_storage_public ON ${DbTables.STORAGE_CONFIGS}(is_public)`).run();
-  await db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_default_per_admin ON ${DbTables.STORAGE_CONFIGS}(admin_id) WHERE is_default = 1`).run();
+      )
+      .run();
+    console.log("storage_configs 表创建成功");
+    
+    console.log("创建 storage_configs 表索引...");
+    await db.prepare(`CREATE INDEX IF NOT EXISTS idx_storage_admin ON ${DbTables.STORAGE_CONFIGS}(admin_id)`).run();
+    await db.prepare(`CREATE INDEX IF NOT EXISTS idx_storage_type ON ${DbTables.STORAGE_CONFIGS}(storage_type)`).run();
+    await db.prepare(`CREATE INDEX IF NOT EXISTS idx_storage_public ON ${DbTables.STORAGE_CONFIGS}(is_public)`).run();
+    await db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_default_per_admin ON ${DbTables.STORAGE_CONFIGS}(admin_id) WHERE is_default = 1`).run();
+    console.log("storage_configs 表索引创建成功");
+  } catch (error) {
+    console.error("创建 storage_configs 表失败:", error);
+    throw error;
+  }
 
-  // 存储 ACL 表：主体 -> 存储配置访问白名单
-  await db
-    .prepare(
-      `
+  try {
+    // 存储 ACL 表：主体 -> 存储配置访问白名单
+    console.log("创建 principal_storage_acl 表...");
+    await db
+      .prepare(
+        `
       CREATE TABLE IF NOT EXISTS ${DbTables.PRINCIPAL_STORAGE_ACL} (
         subject_type TEXT NOT NULL,
         subject_id TEXT NOT NULL,
@@ -160,16 +172,23 @@ async function createStorageTables(db) {
         PRIMARY KEY (subject_type, subject_id, storage_config_id)
       )
     `
-    )
-    .run();
-  await db
-    .prepare(`CREATE INDEX IF NOT EXISTS idx_psa_storage_config_id ON ${DbTables.PRINCIPAL_STORAGE_ACL}(storage_config_id)`)
-    .run();
+      )
+      .run();
+    await db
+      .prepare(`CREATE INDEX IF NOT EXISTS idx_psa_storage_config_id ON ${DbTables.PRINCIPAL_STORAGE_ACL}(storage_config_id)`)
+      .run();
+    console.log("principal_storage_acl 表创建成功");
+  } catch (error) {
+    console.error("创建 principal_storage_acl 表失败:", error);
+    throw error;
+  }
 
-  // 创建storage_mounts表 - 存储挂载配置
-  await db
-    .prepare(
-      `
+  try {
+    // 创建storage_mounts表 - 存储挂载配置
+    console.log("创建 storage_mounts 表...");
+    await db
+      .prepare(
+        `
       CREATE TABLE IF NOT EXISTS ${DbTables.STORAGE_MOUNTS} (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -190,8 +209,15 @@ async function createStorageTables(db) {
         last_used DATETIME
       )
     `
-    )
-    .run();
+      )
+      .run();
+    console.log("storage_mounts 表创建成功");
+  } catch (error) {
+    console.error("创建 storage_mounts 表失败:", error);
+    throw error;
+  }
+  
+  console.log("存储相关表创建完成");
 }
 
 /**
@@ -1474,10 +1500,15 @@ export async function checkAndInitDatabase(db) {
 
     for (const tableName of requiredTables) {
       if (!tableSet.has(tableName)) {
-        console.log(`${tableName}表不存在，需要创建`);
+        console.log(`缺少必需表: ${tableName}`);
         needsTablesCreation = true;
-        break;
+      } else {
+        console.log(`表已存在: ${tableName}`);
       }
+    }
+    
+    if (needsTablesCreation) {
+      console.log("检测到缺少以下表，执行表创建...");
     }
 
     // 如果有表不存在，执行表初始化
