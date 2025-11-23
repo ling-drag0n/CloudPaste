@@ -5566,6 +5566,7 @@ export default {
     try {
       // 初始化数据库
       // await initDatabase(env.DB);
+      const { checkAndInitDatabase } = await import('./src/utils/database.js');
       await checkAndInitDatabase(env.DB);
       // 检查是否是直接文件下载请求
       const url = new URL(request.url);
