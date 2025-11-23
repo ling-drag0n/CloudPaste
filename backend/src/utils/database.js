@@ -1464,10 +1464,12 @@ export async function checkAndInitDatabase(db) {
       DbTables.ADMIN_TOKENS,
       DbTables.API_KEYS,
       DbTables.STORAGE_CONFIGS,
+      DbTables.PRINCIPAL_STORAGE_ACL,
       DbTables.FILES,
       DbTables.FILE_PASSWORDS,
       DbTables.SYSTEM_SETTINGS,
       DbTables.STORAGE_MOUNTS,
+      DbTables.FS_META,
     ];
 
     for (const tableName of requiredTables) {
@@ -1482,9 +1484,12 @@ export async function checkAndInitDatabase(db) {
     if (needsTablesCreation) {
       console.log("检测到缺少表，执行表创建...");
       await initDatabase(db);
+      console.log("数据库表创建完成");
+      // 初始化完成后，返回成功
+      return true;
     }
 
-    // 检查数据库版本
+    // 检查数据库版本（只在表都存在时检查）
     const versionSetting = await db.prepare(`SELECT value FROM ${DbTables.SYSTEM_SETTINGS} WHERE key = 'schema_version'`).first();
 
     const currentVersion = versionSetting ? parseInt(versionSetting.value) : 0;
