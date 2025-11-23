@@ -40,6 +40,7 @@ export default {
             .catch((error) => {
               console.error("数据库初始化失败:", error);
               isInitializing = false;
+              initializationPromise = null; // 重置Promise以便下次请求重试
               // 重置标记以便下次请求重试
               throw error;
             });

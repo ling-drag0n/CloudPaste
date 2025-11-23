@@ -1481,6 +1481,7 @@ export async function checkAndInitDatabase(db) {
 
     // 检查每个表是否存在，不存在则创建
     let needsTablesCreation = false;
+    const missingTables = [];
 
     // 检查所有必需的表
     const requiredTables = [
@@ -1500,16 +1501,20 @@ export async function checkAndInitDatabase(db) {
 
     for (const tableName of requiredTables) {
       if (!tableSet.has(tableName)) {
-        console.log(`缺少必需表: ${tableName}`);
+        missingTables.push(tableName);
         needsTablesCreation = true;
-      } else {
-        console.log(`表已存在: ${tableName}`);
       }
+    }
+    
+    if (needsTablesCreation) {
+      console.log(`缺少以下表: ${missingTables.join(', ')}`);
+    } else {
+      console.log("所有必需的表都已存在");
     }
 
     // 如果有表不存在，执行表初始化
     if (needsTablesCreation) {
-      console.log("检测到缺少表，执行表创建...");
+      console.log("开始创建缺少的表...");
       await initDatabase(db);
       console.log("数据库表创建完成");
       // 初始化完成后，返回成功
