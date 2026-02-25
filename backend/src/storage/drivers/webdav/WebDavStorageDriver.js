@@ -82,9 +82,11 @@ export class WebDavStorageDriver extends BaseDriver {
       const agent =
         endpointForClient.startsWith("https://") && this.tlsSkipVerify ? new https.Agent({ rejectUnauthorized: false }) : undefined;
       const clientOptions = agent ? { httpsAgent: agent } : {};
+      const authHeader = this._basicAuthHeader(password);
       this.client = createClient(endpointForClient, {
-        username: this.username,
-        password,
+        headers: {
+          Authorization: authHeader,
+        },
         ...clientOptions,
       });
       this.initialized = true;
@@ -917,12 +919,9 @@ export class WebDavStorageDriver extends BaseDriver {
     return `${base}${davPath}`;
   }
 
-  _basicAuthHeader() {
-    const raw = `${this.username}:${this.decryptedPassword || ""}`;
-    const encoded =
-      typeof btoa === "function"
-        ? btoa(raw)
-        : Buffer.from(raw).toString("base64");
+  _basicAuthHeader(passwordOverride = undefined) {
+    const raw = `${this.username}:${passwordOverride ?? this.decryptedPassword ?? ""}`;
+    const encoded = Buffer.from(raw, "utf8").toString("base64");
     return `Basic ${encoded}`;
   }
 

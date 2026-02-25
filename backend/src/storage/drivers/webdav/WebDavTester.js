@@ -1,7 +1,14 @@
 import { ValidationError } from "../../../http/errors.js";
 import { decryptValue } from "../../../utils/crypto.js";
 import { createClient } from "webdav";
+import { Buffer } from "buffer";
 import https from "https";
+
+function buildUtf8BasicAuthHeader(username, password) {
+  const raw = `${username ?? ""}:${password ?? ""}`;
+  const encoded = Buffer.from(raw, "utf8").toString("base64");
+  return `Basic ${encoded}`;
+}
 
 function normalizeEndpointUrlForClient(value) {
   const raw = value == null ? "" : String(value).trim();
@@ -64,9 +71,11 @@ export async function webDavTestConnection(config, encryptionSecret) {
       ? new https.Agent({ rejectUnauthorized: false })
       : undefined;
   const clientOptions = agent ? { httpsAgent: agent } : {};
+  const authHeader = buildUtf8BasicAuthHeader(username, password);
   const client = createClient(endpoint, {
-    username,
-    password,
+    headers: {
+      Authorization: authHeader,
+    },
     ...clientOptions,
   });
 
