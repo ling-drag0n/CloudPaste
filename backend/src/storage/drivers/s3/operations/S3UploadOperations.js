@@ -313,25 +313,41 @@ export class S3UploadOperations {
       let verifiedSize = fileSize;
       let verifiedContentType = contentType;
 
-      try {
-        const headParams = {
-          Bucket: this.config.bucket_name,
-          Key: fullKey,
-        };
-        const headCommand = new HeadObjectCommand(headParams);
-        const headResult = await this.s3Client.send(headCommand);
+      const maxRetries = 3;
+      const retryDelays = [300, 600, 1200]; // 毫秒，递增等待
 
-        // 使用后端获取的真实元数据
-        verifiedETag = headResult.ETag ? headResult.ETag.replace(/"/g, "") : verifiedETag;
-        verifiedSize = headResult.ContentLength || verifiedSize;
-        verifiedContentType = headResult.ContentType || verifiedContentType;
+      let headResult = null;
+      let lastError = null;
 
-        console.log(`✅ 后端验证上传成功 - 文件[${fullKey}], ETag[${verifiedETag}], 大小[${verifiedSize}]`);
-      } catch (headError) {
-        // 如果 HeadObject 失败,说明文件不存在,上传实际失败
-        console.error(`❌ 后端验证失败 - 文件[${fullKey}]不存在:`, headError);
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+          const headParams = {
+            Bucket: this.config.bucket_name,
+            Key: fullKey,
+          };
+          const headCommand = new HeadObjectCommand(headParams);
+          headResult = await this.s3Client.send(headCommand);
+          lastError = null;
+          break; // 成功了，跳出循环
+        } catch (headError) {
+          lastError = headError;
+          if (attempt < maxRetries) {
+            console.warn(`⚠️ 后端验证第${attempt + 1}次失败 - 文件[${fullKey}]，${retryDelays[attempt]}ms 后重试`);
+            await new Promise((resolve) => setTimeout(resolve, retryDelays[attempt]));
+          }
+        }  
+      }
+      if (lastError) {
+        console.error(`❌ 后端验证失败 - 文件[${fullKey}]重试${maxRetries}次后仍不存在:`, lastError);
         throw new ValidationError("文件上传失败:文件不存在于存储桶中");
       }
+
+        // 使用后端获取的真实元数据
+      verifiedETag = headResult.ETag ? headResult.ETag.replace(/"/g, "") : verifiedETag;
+      verifiedSize = headResult.ContentLength || verifiedSize;
+      verifiedContentType = headResult.ContentType || verifiedContentType;
+
+      console.log(`✅ 后端验证上传成功 - 文件[${fullKey}], ETag[${verifiedETag}], 大小[${verifiedSize}]`);
 
       // 更新父目录的修改时间
       await updateParentDirectoriesModifiedTime(this.s3Client, this.config.bucket_name, fullKey, this.config.root_prefix);
