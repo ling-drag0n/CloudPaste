@@ -10,10 +10,12 @@
 import { Hono } from "hono";
 import { ApiStatus, UserType } from "../constants/index.js";
 import { ValidationError, NotFoundError, AuthorizationError } from "../http/errors.js";
+import { usePolicy } from "../security/policies/policies.js";
 import { LinkService } from "../storage/link/LinkService.js";
 import { FileService } from "../services/fileService.js";
 import { getEncryptionSecret } from "../utils/environmentUtils.js";
 import { getPrincipal } from "../security/middleware/securityContext.js";
+import { isSharePasswordAccepted } from "../security/helpers/proxyAccess.js";
 
 const proxyLinkRoutes = new Hono();
 
@@ -35,6 +37,7 @@ async function parseLinkBody(c) {
   const type = body.type || "fs";
   const path = body.path || null;
   const slug = body.slug || null;
+  const password = typeof body.password === "string" ? body.password : null;
 
   if (!["fs", "share"].includes(type)) {
     throw new ValidationError("Invalid type, expected fs|share");
@@ -47,8 +50,32 @@ async function parseLinkBody(c) {
     throw new ValidationError("Missing slug for share type");
   }
 
-  return { type, path, slug };
+  return { type, path, slug, password };
 }
+
+const parseProxyLinkBody = async (c, next) => {
+  const body = await parseLinkBody(c);
+  c.set("proxyLinkBody", body);
+  await next();
+};
+
+const requireProxyFsRead = usePolicy("fs.read", {
+  pathResolver: (c) => c.get("proxyLinkBody")?.path,
+});
+
+const authorizeProxyLink = async (c, next) => {
+  const body = c.get("proxyLinkBody");
+
+  // FS upstream resolution returns direct/presigned storage access and must
+  // use the same authentication, permission and path checks as FS reads.
+  if (body?.type === "fs") {
+    return requireProxyFsRead(c, next);
+  }
+
+  // Share links remain usable by anonymous visitors, but password-protected
+  // shares are checked below before an upstream URL is returned.
+  return next();
+};
 
 /**
  * 统一响应格式
@@ -85,17 +112,18 @@ function buildLinkResponse({ url, header }) {
   };
 }
 
-proxyLinkRoutes.post("/api/proxy/link", async (c) => {
+proxyLinkRoutes.post("/api/proxy/link", parseProxyLinkBody, authorizeProxyLink, async (c) => {
   const db = c.env.DB;
   const encryptionSecret = getEncryptionSecret(c);
   const repositoryFactory = c.get("repos");
 
-  const { type, path, slug } = await parseLinkBody(c);
+  const { type, path, slug, password } = c.get("proxyLinkBody");
 
   const linkService = new LinkService(db, encryptionSecret, repositoryFactory);
   const fileService = new FileService(db, encryptionSecret, repositoryFactory);
 
-  // 使用 principal，支持 ADMIN / API_KEY / 匿名三种身份
+  // 使用 principal，支持 ADMIN / API_KEY / 匿名三种身份。
+  // FS 分支已由 requireProxyFsRead 强制认证；share 分支允许公开分享匿名解析。
   const principal = getPrincipal(c);
   let userType;
   let userIdOrInfo;
@@ -138,6 +166,10 @@ proxyLinkRoutes.post("/api/proxy/link", async (c) => {
 
     case "share": {
       const file = await fileService.getFileBySlug(slug);
+      if (!(await isSharePasswordAccepted(file, password))) {
+        throw new AuthorizationError("需要正确的文件密码");
+      }
+
       const access = fileService.isFileAccessible(file);
       if (!access.accessible) {
         if (access.reason === "expired") {
@@ -152,6 +184,7 @@ proxyLinkRoutes.post("/api/proxy/link", async (c) => {
         { type: userType, id: userType === UserType.ADMIN ? userIdOrInfo : userIdOrInfo?.id ?? null },
         {
           request: c.req.raw,
+          password,
         },
       );
       if (!storageLink || !storageLink.url) {

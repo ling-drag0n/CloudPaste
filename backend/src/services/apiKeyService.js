@@ -2,7 +2,7 @@ import { generateRandomString } from "../utils/common.js";
 import { ApiStatus, DbTables } from "../constants/index.js";
 import { ensureRepositoryFactory } from "../utils/repositories.js";
 import { Permission, PermissionChecker } from "../constants/permissions.js";
-import { ValidationError, ConflictError, NotFoundError } from "../http/errors.js";
+import { ValidationError, ConflictError, NotFoundError, AuthorizationError } from "../http/errors.js";
 
 const resolveRepositoryFactory = ensureRepositoryFactory;
 
@@ -370,7 +370,8 @@ export async function getAccessibleMountsByBasicPath(db, basicPath, subjectType,
         allowedConfigIdsSet = new Set(allowedConfigIds);
       }
     } catch (error) {
-      console.warn("加载存储 ACL 失败，将回退到仅基于 is_public + basicPath 的过滤逻辑：", error);
+      console.error("加载存储 ACL 失败，拒绝扩大存储访问范围：", error);
+      throw new AuthorizationError("无法验证存储访问权限");
     }
   }
 

@@ -1,5 +1,5 @@
 import { ApiStatus, UserType } from "../constants/index.js";
-import { ValidationError, NotFoundError, DriverError } from "../http/errors.js";
+import { ValidationError, NotFoundError, DriverError, AuthorizationError } from "../http/errors.js";
 import { ShareRecordService } from "./share/ShareRecordService.js";
 import { StorageQuotaGuard } from "../storage/usage/StorageQuotaGuard.js";
 
@@ -127,7 +127,8 @@ export class FileShareService {
           allowedConfigIdsSet = new Set(allowedIds);
         }
       } catch (error) {
-        console.warn("加载存储 ACL 失败，将回退到仅基于 is_public 的存储配置选择：", error);
+        console.error("加载存储 ACL 失败，拒绝扩大存储配置选择范围：", error);
+        throw new AuthorizationError("无法验证存储访问权限");
       }
     }
 

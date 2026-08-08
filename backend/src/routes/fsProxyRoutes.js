@@ -7,7 +7,7 @@
 
 import { Hono } from "hono";
 import crypto from "crypto";
-import { AppError, AuthenticationError, DriverError } from "../http/errors.js";
+import { AppError, AuthenticationError, AuthorizationError, DriverError } from "../http/errors.js";
 import { ApiStatus } from "../constants/index.js";
 import { MountManager } from "../storage/managers/MountManager.js";
 import { findMountPointByPathForProxy } from "../storage/fs/utils/MountResolver.js";
@@ -17,6 +17,7 @@ import { getEncryptionSecret } from "../utils/environmentUtils.js";
 import { getQueryBool } from "../utils/common.js";
 import { CAPABILITIES } from "../storage/interfaces/capabilities/index.js";
 import { StorageStreaming, STREAMING_CHANNELS } from "../storage/streaming/index.js";
+import { isWebProxyEnabled } from "../security/helpers/proxyAccess.js";
 
 // 签名代理路径不会走 RBAC，因此这里用结构化日志补充最少可观测性。
 const emitProxyAudit = (c, details) => {
@@ -244,6 +245,21 @@ fsProxyRoutes.get(`${PROXY_CONFIG.ROUTE_PREFIX}/*`, async (c) => {
       const status = mountResult.error.status;
       const code = status === 401 ? "UNAUTHORIZED" : status === 403 ? "FORBIDDEN" : status === 404 ? "NOT_FOUND" : "PROXY_ERROR";
       throw new AppError(mountResult.error.message, { status, code, expose: true });
+    }
+
+    // /api/p is the public entry point for mounts explicitly configured for
+    // web proxying. Without this check, any active mount could be streamed by
+    // using the special proxy user type below, even when web_proxy is off.
+    if (!isWebProxyEnabled(mountResult.mount)) {
+      emitProxyAudit(c, {
+        path,
+        decision: "deny",
+        reason: "web_proxy_disabled",
+        signatureRequired: false,
+        signatureProvided: Boolean(c.req.query(PROXY_CONFIG.SIGN_PARAM)),
+        mountId: mountResult.mount?.id ?? null,
+      });
+      throw new AuthorizationError("该挂载未启用代理访问");
     }
 
     // 挂载点验证成功，mountResult包含mount和subPath信息

@@ -317,7 +317,8 @@ const getStorageConfigByUserType = async (db, configId, userIdOrInfo, userType, 
           allowed = allowedConfigIds.includes(configId);
         }
       } catch (error) {
-        console.warn("加载存储 ACL 失败，将回退到仅基于 is_public 的访问控制：", error);
+        console.error("加载存储 ACL 失败，拒绝扩大存储访问范围：", error);
+        throw new AuthorizationError("无法验证存储访问权限");
       }
     }
 
