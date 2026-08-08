@@ -363,6 +363,7 @@ export async function handleProxyRequest(request, env) {
 
     const controlUrl = new URL(ORIGIN);
     controlUrl.pathname = "/api/proxy/link";
+    const sharePassword = url.searchParams.get("password");
 
     const linkResp = await fetch(controlUrl.toString(), {
       method: "POST",
@@ -370,7 +371,7 @@ export async function handleProxyRequest(request, env) {
         "content-type": "application/json;charset=UTF-8",
         Authorization: TOKEN,
       },
-      body: JSON.stringify({ type: "share", slug }),
+      body: JSON.stringify({ type: "share", slug, ...(sharePassword ? { password: sharePassword } : {}) }),
     });
 
     // 分享视图同样增加详细调试日志，方便排查 502

@@ -12,6 +12,9 @@ import { findMountPointByPathForProxy } from "../fs/utils/MountResolver.js";
 import { ProxySignatureService } from "../../services/ProxySignatureService.js";
 import { WORKER_ENTRY, buildSignedProxyUrl, buildSignedWorkerUrl } from "../../constants/proxy.js";
 import { UserType } from "../../constants/index.js";
+import { AuthorizationError } from "../../http/errors.js";
+import { getAccessibleMountsForUser } from "../../security/helpers/access.js";
+import { isMountAccessible } from "../../security/helpers/proxyAccess.js";
 
 /**
  * 将文件名转为 URL path segment 安全的形式（用于 /api/s/:slug/:filename）。
@@ -32,13 +35,21 @@ function toUrlSafeFilename(filename) {
  * - 下载语义：追加 ?down=true
  * @param {string} slug
  * @param {string} filename
- * @param {{ download?: boolean }} [options]
+ * @param {{ download?: boolean, password?: string }} [options]
  * @returns {string}
  */
 function buildShareProxyPath(slug, filename, options = {}) {
   const safeName = toUrlSafeFilename(filename);
   const base = `/api/s/${encodeURIComponent(String(slug || ""))}/${encodeURIComponent(safeName)}`;
-  return options.download ? `${base}?down=true` : base;
+  const params = new URLSearchParams();
+  if (options.download) {
+    params.set("down", "true");
+  }
+  if (typeof options.password === "string" && options.password.length > 0) {
+    params.set("password", options.password);
+  }
+  const query = params.toString();
+  return query ? `${base}?${query}` : base;
 }
 
 /**
@@ -104,7 +115,7 @@ export class LinkService {
   /**
    * @param {Object} file
    * @param {{ type?: string, id?: string } | null} userInfo
-   * @param {{ mode?: "client" | "proxy", request?: Request }} [options]
+   * @param {{ mode?: "client" | "proxy", request?: Request, password?: string }} [options]
    * @returns {Promise<import('./LinkTypes.js').StorageLink>}
    */
   async getLinkForShare(file, userInfo = null, options = {}) {
@@ -120,7 +131,10 @@ export class LinkService {
     if (!file || !file.storage_config_id || !file.storage_path || !file.storage_type || !slug) {
       if (mode === "proxy") {
         // 兜底：直接返回 /api/s 下载路径，交由上层处理
-        const shareDownloadPath = `/api/s/${slug || ""}?down=true`;
+        const shareDownloadPath = buildShareProxyPath(slug || "", "file", {
+          download: true,
+          password: options.password,
+        });
         let finalUrl = shareDownloadPath;
         if (request) {
           try {
@@ -215,7 +229,10 @@ export class LinkService {
 
     // 1) use_proxy = 1：统一走本地 share 内容路由（下载语义）
     if (useProxyFlag) {
-      const shareDownloadPath = buildShareProxyPath(slug, file?.filename || "file", { download: true });
+      const shareDownloadPath = buildShareProxyPath(slug, file?.filename || "file", {
+        download: true,
+        password: options.password,
+      });
       let finalUrl = shareDownloadPath;
       if (request) {
         try {
@@ -264,7 +281,10 @@ export class LinkService {
       return createDirectLink(downloadDirectUrl);
     }
 
-    const shareDownloadPath = buildShareProxyPath(slug, file?.filename || "file", { download: true });
+    const shareDownloadPath = buildShareProxyPath(slug, file?.filename || "file", {
+      download: true,
+      password: options.password,
+    });
     let finalUrl = shareDownloadPath;
     if (request) {
       try {
@@ -342,6 +362,21 @@ export class LinkService {
       }
     } catch (e) {
       console.warn("解析挂载或存储配置失败，将退回 FS 默认链接策略：", e?.message || e);
+    }
+
+    // The upstream-http branch below can return a presigned/direct URL without
+    // going through FileSystem/MountManager. Re-run the API-key mount ACL here
+    // so this optimization cannot bypass storage visibility or ACL filtering.
+    if (mount && userType === UserType.API_KEY) {
+      const accessibleMounts = await getAccessibleMountsForUser(
+        this.db,
+        userIdOrInfo,
+        userType,
+        this.repositoryFactory,
+      );
+      if (!isMountAccessible(mount, accessibleMounts)) {
+        throw new AuthorizationError(`API密钥用户无权限访问挂载点: ${mount.name || mount.id}`);
+      }
     }
 
     // 仅在挂载未开启 web_proxy 时才允许 url_proxy 生效：

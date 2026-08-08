@@ -19,7 +19,7 @@ import { getEncryptionSecret } from "../utils/environmentUtils.js";
 import { usePolicy } from "../security/policies/policies.js";
 import { resolvePrincipal } from "../security/helpers/principal.js";
 import { useRepositories } from "../utils/repositories.js";
-import { NotFoundError } from "../http/errors.js";
+import { NotFoundError, AuthorizationError } from "../http/errors.js";
 
 const storageConfigRoutes = new Hono();
 const requireRead = usePolicy("storage.config.read");
@@ -64,7 +64,8 @@ storageConfigRoutes.get("/api/storage", requireRead, async (c) => {
         filteredConfigs = configs.filter((cfg) => allowedSet.has(cfg.id));
       }
     } catch (error) {
-      console.warn("加载存储 ACL 失败，将回退到仅基于 is_public 的存储配置列表：", error);
+      console.error("加载存储 ACL 失败，拒绝扩大存储配置列表范围：", error);
+      throw new AuthorizationError("无法验证存储访问权限");
     }
   }
 
@@ -112,7 +113,8 @@ storageConfigRoutes.get("/api/storage/:id", requireRead, async (c) => {
         if (error instanceof NotFoundError) {
           throw error;
         }
-        console.warn("加载存储 ACL 失败，将回退到仅基于 is_public 的访问控制：", error);
+        console.error("加载存储 ACL 失败，拒绝扩大存储访问范围：", error);
+        throw new AuthorizationError("无法验证存储访问权限");
       }
     }
 

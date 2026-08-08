@@ -1720,7 +1720,9 @@ X-Custom-Auth-Key: <api_key>
 
 - `POST /api/proxy/link`
   - 描述：统一存储链接解析接口
-  - 授权：支持管理员令牌、API 密钥或匿名访问
+  - 授权：
+    - `type = "fs"`：必须使用管理员令牌或 API 密钥；API 密钥需要 `MOUNT_VIEW`，且路径必须位于其 `basic_path` 和存储 ACL 范围内
+    - `type = "share"`：公开分享可匿名访问；密码分享必须在请求体提供正确的 `password`
   - 请求体：
     ```json
     {
@@ -1732,7 +1734,8 @@ X-Custom-Auth-Key: <api_key>
     ```json
     {
       "type": "share",
-      "slug": "file-slug"
+      "slug": "file-slug",
+      "password": "share-password"
     }
     ```
   - 响应：
@@ -1758,13 +1761,14 @@ X-Custom-Auth-Key: <api_key>
 - `GET /api/p/*`
   - 描述：文件系统代理访问路由（web_proxy 功能）
   - 路径格式：`/api/p/mount/path/file.ext`
-  - 授权：根据挂载点配置决定是否需要签名验证
+  - 授权：仅允许显式启用 `web_proxy` 的挂载；是否需要签名由全局/挂载签名配置决定
   - 查询参数：
     - `download` - 是否强制下载（可选，默认 false）
     - `sign` - 签名参数（当挂载点启用签名时必填）
   - 响应：文件内容流
   - 说明：
     - 专门用于 web_proxy 功能的文件代理访问
+    - 未启用 `web_proxy` 的挂载返回 403，不会通过该入口暴露
     - 支持 Range 请求，实现断点续传和视频流播放
     - 当挂载点配置 `enable_sign = true` 时，需要提供有效签名
     - 签名验证失败返回 401 Unauthorized
