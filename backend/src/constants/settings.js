@@ -114,6 +114,28 @@ export const DEFAULT_SETTINGS = {
     default_value: "false",
   },
 
+  file_transfer_encryption: {
+    key: "file_transfer_encryption",
+    type: SETTING_TYPES.BOOL,
+    group_id: SETTING_GROUPS.GLOBAL,
+    help: "服务端传输加密：开启后新上传的分享文件将以 AES-256-GCM 加密存储，下载时代理解密。加密文件强制走代理访问；预签名直传与断点续传暂不支持，将自动回退。",
+    options: null,
+    sort_order: 6,
+    flag: SETTING_FLAGS.PUBLIC,
+    default_value: "false",
+  },
+
+  force_https: {
+    key: "force_https",
+    type: SETTING_TYPES.BOOL,
+    group_id: SETTING_GROUPS.GLOBAL,
+    help: "强制 HTTPS：开启后所有 HTTP 请求将 308 跳转到 HTTPS 并附加 HSTS 头。Docker/自建部署建议开启（Workers 平台已默认提供 HTTPS）。",
+    options: null,
+    sort_order: 7,
+    flag: SETTING_FLAGS.PUBLIC,
+    default_value: "false",
+  },
+
   // 预览设置组
   preview_text_types: {
     key: "preview_text_types",

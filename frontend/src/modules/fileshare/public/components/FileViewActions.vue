@@ -94,6 +94,7 @@ import { FileType } from "@/utils/fileTypes.js";
 import { useDeleteSettingsStore } from "@/stores/deleteSettingsStore.js";
 import { getFileErrorKey } from "@/api/services/fileGateway.js";
 import { useFileshareService } from "@/modules/fileshare/fileshareService.js";
+import { isE2EFile, downloadE2EFile, previewE2EFile } from "@/modules/storage-core/e2e/e2eFileAccess.js";
 import { useGlobalMessage } from "@/composables/core/useGlobalMessage.js";
 import { IconCheck, IconDelete, IconDownload, IconEye, IconRename, IconShare } from "@/components/icons";
 import { createLogger } from "@/utils/logger.js";
@@ -146,11 +147,23 @@ const hasDownloadUrl = computed(() => !!fileshareService.getPermanentDownloadUrl
 /**
  * 预览文件
  * 在新窗口中打开预览链接，为Office文件使用在线预览服务
+ * 端到端加密文件：取回密文 -> 浏览器内解密 -> Blob URL 预览
  */
 const previewFile = async () => {
   if (!props.fileInfo) return;
 
   try {
+    // 端到端加密文件：服务器只有密文，前端解密后用 Blob URL 打开
+    if (isE2EFile(props.fileInfo)) {
+      const ok = await previewE2EFile(props.fileInfo, () =>
+        fileshareService.getPermanentDownloadUrl(props.fileInfo),
+      );
+      if (!ok) {
+        showError(t("fileView.actions.previewFailed"));
+      }
+      return;
+    }
+
     if (props.fileInfo.type === FileType.OFFICE) {
       const officePreviewUrl = await fileshareService.getOfficePreviewUrl(props.fileInfo, {
         provider: "microsoft",
@@ -186,9 +199,23 @@ const previewFile = async () => {
 /**
  * 下载文件
  * 通过创建隐藏的a元素并模拟点击下载文件
+ * 端到端加密文件：取回密文 -> 浏览器内解密 -> 保存明文
  */
-const downloadFile = () => {
+const downloadFile = async () => {
   if (!props.fileInfo) return;
+
+  // 端到端加密文件：前端解密后保存
+  if (isE2EFile(props.fileInfo)) {
+    try {
+      await downloadE2EFile(props.fileInfo, () =>
+        fileshareService.getPermanentDownloadUrl(props.fileInfo),
+      );
+    } catch (error) {
+      log.error("端到端加密下载失败:", error);
+      showError(`${t("fileView.actions.downloadFailed")}: ${error.message || t("fileView.errors.unknown")}`);
+    }
+    return;
+  }
 
   try {
     const downloadUrl = fileshareService.getPermanentDownloadUrl(props.fileInfo);

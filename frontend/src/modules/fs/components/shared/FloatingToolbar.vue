@@ -59,7 +59,7 @@
 
           <!-- 上传按钮 -->
           <SpeedDialItem
-            v-if="canWrite"
+            v-if="canWrite && canUpload"
             :delay="100"
             :tooltip="t('mount.toolbar.upload')"
             :dark-mode="darkMode"
@@ -184,6 +184,10 @@ const props = defineProps({
     default: false
   },
   canWrite: {
+    type: Boolean,
+    default: true
+  },
+  canUpload: {
     type: Boolean,
     default: true
   },

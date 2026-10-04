@@ -38,6 +38,16 @@
           <IconLink size="sm" />
         </ActionButton>
 
+        <!-- 生成分享链接按钮（单选，文件或文件夹均可） -->
+        <ActionButton
+          :title="t('mount.contextMenu.createShare')"
+          :dark-mode="darkMode"
+          :disabled="selectedCount > 1"
+          @click="handleShare"
+        >
+          <IconShare size="sm" />
+        </ActionButton>
+
         <!-- 复制按钮 -->
         <ActionButton
           :title="t('mount.fileItem.copy')"
@@ -103,7 +113,8 @@ import {
   IconShoppingCart,
   IconRename,
   IconDelete,
-  IconClose
+  IconClose,
+  IconShare
 } from '@/components/icons'
 
 // 操作按钮子组件
@@ -142,6 +153,7 @@ const props = defineProps({
 const emit = defineEmits([
   'download',
   'copy-link',
+  'share',
   'copy',
   'add-to-basket',
   'rename',
@@ -159,6 +171,12 @@ function handleDownload() {
 function handleCopyLink() {
   if (props.selectedCount === 1) {
     emit('copy-link')
+  }
+}
+
+function handleShare() {
+  if (props.selectedCount === 1) {
+    emit('share')
   }
 }
 

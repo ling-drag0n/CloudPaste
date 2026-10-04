@@ -82,15 +82,36 @@
 
         <!-- 文件详细信息 -->
         <div class="p-4 grid grid-cols-2 gap-4 text-sm bg-gray-50 dark:bg-gray-700/50">
+          <!-- 分享类型 -->
+          <div>
+            <div class="text-xs font-medium uppercase" :class="darkMode ? 'text-gray-500' : 'text-gray-500'">类型</div>
+            <div>
+              <span
+                class="px-2 py-0.5 text-xs rounded inline-block"
+                :class="
+                  getTargetType(file) === 'folder'
+                    ? darkMode
+                      ? 'bg-amber-900/50 text-amber-300'
+                      : 'bg-amber-100 text-amber-800'
+                    : darkMode
+                      ? 'bg-blue-900/50 text-blue-300'
+                      : 'bg-blue-100 text-blue-800'
+                "
+              >
+                {{ getTargetType(file) === "folder" ? "文件夹" : "文件" }}
+              </span>
+            </div>
+          </div>
+
           <!-- 文件大小 -->
           <div>
             <div class="text-xs font-medium uppercase" :class="darkMode ? 'text-gray-500' : 'text-gray-500'">大小</div>
-            <div :class="darkMode ? 'text-gray-300' : 'text-gray-700'">{{ formatFileSize(file.size) }}</div>
+            <div :class="darkMode ? 'text-gray-300' : 'text-gray-700'">{{ getTargetType(file) === "folder" ? "-" : formatFileSize(file.size) }}</div>
           </div>
 
           <!-- MIME类型 -->
           <div>
-            <div class="text-xs font-medium uppercase" :class="darkMode ? 'text-gray-500' : 'text-gray-500'">类型</div>
+            <div class="text-xs font-medium uppercase" :class="darkMode ? 'text-gray-500' : 'text-gray-500'">MIME类型</div>
             <div>
               <span
                 class="px-2 py-0.5 text-xs rounded inline-block max-w-full truncate"
@@ -104,7 +125,7 @@
 
           <!-- 剩余次数 -->
           <div>
-            <div class="text-xs font-medium uppercase" :class="darkMode ? 'text-gray-500' : 'text-gray-500'">剩余次数</div>
+            <div class="text-xs font-medium uppercase" :class="darkMode ? 'text-gray-500' : 'text-gray-500'">剩余下载次数</div>
             <div :class="getRemainingViewsClass(file)">
               {{ getRemainingViewsLabel(file) }}
             </div>
@@ -151,14 +172,14 @@
 
         <!-- 操作按钮 -->
         <div class="p-4 border-t border-gray-200 dark:border-gray-700 flex justify-end space-x-2">
-          <button @click="$emit('preview', file)" class="p-2 rounded-md" :class="darkMode ? 'bg-gray-700 text-blue-400' : 'bg-gray-100 text-blue-600'">
+          <button v-if="mode !== 'share'" @click="$emit('preview', file)" class="p-2 rounded-md" :class="darkMode ? 'bg-gray-700 text-blue-400' : 'bg-gray-100 text-blue-600'">
             <IconEye class="h-5 w-5" />
           </button>
-          <button @click="$emit('edit', file)" class="p-2 rounded-md" :class="darkMode ? 'bg-gray-700 text-green-400' : 'bg-gray-100 text-green-600'">
+          <button v-if="mode !== 'share'" @click="$emit('edit', file)" class="p-2 rounded-md" :class="darkMode ? 'bg-gray-700 text-green-400' : 'bg-gray-100 text-green-600'">
             <IconRename class="h-5 w-5" />
           </button>
           <!-- 移动端复制永久直链按钮 -->
-          <button @click="emit('copy-permanent-link', file)" class="p-2 rounded-md relative" :class="darkMode ? 'bg-gray-700 text-purple-400' : 'bg-gray-100 text-purple-600'">
+          <button v-if="mode !== 'share'" @click="emit('copy-permanent-link', file)" class="p-2 rounded-md relative" :class="darkMode ? 'bg-gray-700 text-purple-400' : 'bg-gray-100 text-purple-600'">
             <IconLink class="h-5 w-5" />
           </button>
           <button @click="$emit('delete', file)" class="p-2 rounded-md" :class="darkMode ? 'bg-gray-700 text-red-400' : 'bg-gray-100 text-red-600'">
@@ -204,6 +225,12 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  // 展示模式：manage=文件管理（含预览/编辑等），share=分享链接管理（仅复制链接/二维码/删除）
+  mode: {
+    type: String,
+    default: "manage",
+    validator: (value) => ["manage", "share"].includes(value),
+  },
 });
 
 const isAdmin = computed(() => props.userType === "admin");
@@ -232,6 +259,9 @@ const getStorageConfigDisplay = (file) => {
     file.storage_provider_type || (hasBoundConfig ? typeLabel : "未绑定配置");
   return { primary, secondary };
 };
+
+// 分享目标类型：缺省/未定义视为文件（向后兼容）
+const getTargetType = (file) => (file?.target_type === "folder" ? "folder" : "file");
 
 // 定义表格列（简化配置）
 const fileColumns = computed(() => [
@@ -353,6 +383,25 @@ const fileColumns = computed(() => [
     },
   },
 
+  // 分享类型列（文件/文件夹）
+  {
+    key: "target_type",
+    type: "display",
+    header: "类型",
+    sortable: false,
+    render: (file) => {
+      const isFolder = getTargetType(file) === "folder";
+      const badgeClass = isFolder
+        ? props.darkMode
+          ? "bg-amber-900/50 text-amber-300"
+          : "bg-amber-100 text-amber-800"
+        : props.darkMode
+          ? "bg-blue-900/50 text-blue-300"
+          : "bg-blue-100 text-blue-800";
+      return h("span", { class: `px-2 py-1 text-xs rounded ${badgeClass} inline-block` }, isFolder ? "文件夹" : "文件");
+    },
+  },
+
   // MIME类型列
   {
     key: "mimetype",
@@ -378,14 +427,14 @@ const fileColumns = computed(() => [
     type: "accessor",
     header: "大小",
     sortable: true,
-    render: (value) => formatFileSize(value),
+    render: (value, file) => (getTargetType(file) === "folder" ? "-" : formatFileSize(value)),
   },
 
-  // 剩余次数列
+  // 剩余下载次数列
   {
     key: "remaining_views",
     type: "display",
-    header: "剩余次数",
+    header: "剩余下载次数",
     sortable: false,
     render: (file) => {
       const displayText = getRemainingViewsLabel(file);
@@ -482,7 +531,7 @@ const fileColumns = computed(() => [
     header: "操作",
     sortable: false,
     render: (file) => {
-      const actions = [
+      const actions = props.mode === "share" ? [] : [
         {
           title: "预览",
           event: () => emit("preview", file),
@@ -602,6 +651,7 @@ const fileColumns = computed(() => [
 // 列样式配置
 const fileColumnClasses = {
   select: "w-10 text-center",
+  target_type: "hidden sm:table-cell text-center",
   mimetype: "hidden md:table-cell text-center",
   size: "hidden sm:table-cell text-center",
   remaining_views: "hidden xl:table-cell text-center",
@@ -845,7 +895,10 @@ const openFileLink = (file) => {
     return;
   }
 
-  const fileUrl = fileshareService.buildShareUrl(file, window.location.origin);
+  const fileUrl =
+    getTargetType(file) === "folder"
+      ? fileshareService.buildFolderShareUrl(file, window.location.origin)
+      : fileshareService.buildShareUrl(file, window.location.origin);
   window.open(fileUrl, "_blank");
 };
 </script>

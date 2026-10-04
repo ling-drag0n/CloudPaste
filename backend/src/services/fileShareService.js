@@ -1,7 +1,27 @@
 import { ApiStatus, UserType } from "../constants/index.js";
-import { ValidationError, NotFoundError, DriverError } from "../http/errors.js";
+import { ValidationError, NotFoundError, DriverError, AppError } from "../http/errors.js";
 import { ShareRecordService } from "./share/ShareRecordService.js";
 import { StorageQuotaGuard } from "../storage/usage/StorageQuotaGuard.js";
+import { isFileTransferEncryptionEnabled } from "../utils/securitySettings.js";
+
+/** 校验并规范化客户端提交的 E2E 加密元数据（非法时返回 null） */
+function normalizeClientEncryptionMeta(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  if (raw.mode !== "e2e" || raw.algo !== "A256GCM") return null;
+  if (typeof raw.noncePrefix !== "string" || !raw.noncePrefix) return null;
+  const meta = {
+    v: Number(raw.v) || 1,
+    mode: "e2e",
+    algo: "A256GCM",
+    keyId: String(raw.keyId || "v1"),
+    kid: String(raw.kid || ""),
+    chunkSize: Number(raw.chunkSize) || 4 * 1024 * 1024,
+    noncePrefix: raw.noncePrefix,
+    plainSize: Number(raw.plainSize) || 0,
+    cipherSize: Number(raw.cipherSize) || 0,
+  };
+  return meta;
+}
 
 export class FileShareService {
   constructor(db, encryptionSecret, repositoryFactory = null) {
@@ -180,11 +200,20 @@ export class FileShareService {
     path = null,
     storage_config_id = null,
     sha256 = null,
+    e2e = false,
     userIdOrInfo,
     userType,
   }) {
     if (!filename) throw new ValidationError("缺少 filename");
     await this._assertSystemMaxUploadSize(fileSize);
+
+    // 服务端传输加密开启时，预签名直传的字节绕过后端无法加密；E2E（客户端已加密）除外
+    if (!e2e && (await isFileTransferEncryptionEnabled(this.db))) {
+      throw new AppError("已启用服务端传输加密，预签名直传通道不可用，请改用代理上传（客户端将自动回退）", {
+        status: ApiStatus.BAD_REQUEST,
+        code: "ENCRYPTION_REQUIRES_PROXY",
+      });
+    }
 
     const { ObjectStore } = await import("../storage/object/ObjectStore.js");
     const { subjectType, subjectId } = this._resolveAclSubject(userType, userIdOrInfo);
@@ -242,6 +271,7 @@ export class FileShareService {
     maxViews,
     useProxy,
     originalFilename,
+    encryptionMeta = null,
     userIdOrInfo,
     userType,
     request,
@@ -310,6 +340,7 @@ export class FileShareService {
       originalFilenameUsed: !!originalFilename,
       storageConfig,
       updateIfExists: !useRandom,
+      encryptionMeta: normalizeClientEncryptionMeta(encryptionMeta),
     });
   }
 
@@ -349,17 +380,39 @@ export class FileShareService {
       incomingBytes: normalizedSize,
       context: "share-upload-direct",
     });
+
+    // 端到端加密：客户端已加密，仅登记元数据，不再二次加密
+    const clientEncryptionMeta = normalizeClientEncryptionMeta(options.encryptionMeta);
+
+    // 服务端传输加密：在 body 流上叠加 AES-256-GCM 加密后再交给驱动
+    let effectiveStream = bodyStream;
+    let serverEncryption = null;
+    if (!clientEncryptionMeta && (await isFileTransferEncryptionEnabled(this.db))) {
+      const { createEncryptingTransform, computeCipherSize } = await import("../utils/fileEncryption.js");
+      const keyScopeId = crypto.randomUUID();
+      const { transform, meta, getCipherSize } = await createEncryptingTransform(keyScopeId, this.encryptionSecret, {});
+      effectiveStream = bodyStream.pipeThrough(transform);
+      serverEncryption = { meta, getCipherSize, expectedCipherSize: computeCipherSize(normalizedSize, meta.chunkSize) };
+    }
+
     const result = await store.uploadDirect({
       storage_config_id: cfg.id,
       directory: options.path || null,
       filename: storedFilename,
-      bodyStream,
-      size: normalizedSize,
+      bodyStream: effectiveStream,
+      size: serverEncryption ? serverEncryption.expectedCipherSize : normalizedSize,
       contentType: mimeType,
       uploadId: options.uploadId || null,
       userIdOrInfo,
       userType,
     });
+
+    let encryptionMeta = clientEncryptionMeta;
+    if (serverEncryption) {
+      serverEncryption.meta.plainSize = normalizedSize;
+      serverEncryption.meta.cipherSize = serverEncryption.getCipherSize();
+      encryptionMeta = serverEncryption.meta;
+    }
 
     const { shouldUseRandomSuffix } = await import("../utils/common.js");
     const useRandom = await shouldUseRandomSuffix(this.db).catch(() => false);
@@ -384,6 +437,7 @@ export class FileShareService {
       originalFilenameUsed: Boolean(options.originalFilename),
       storageConfig: cfg,
       updateIfExists: !useRandom,
+      encryptionMeta,
     });
   }
 
@@ -428,17 +482,63 @@ export class FileShareService {
       context: "share-upload-file",
     });
 
-    const uploadResult = await store.uploadFileForShare({
-      storage_config_id: cfg.id,
-      directory: options.path || null,
-      filename: storedFilename,
-      file,
-      size: normalizedSize,
-      contentType: mimeType,
-      uploadId: options.uploadId || null,
-      userIdOrInfo,
-      userType,
-    });
+    const uploadResult = await (async () => {
+      // 端到端加密：客户端已加密，直接按普通字节上传并登记元数据
+      const clientEncryptionMeta = normalizeClientEncryptionMeta(options.encryptionMeta);
+      if (clientEncryptionMeta) {
+        return await store.uploadFileForShare({
+          storage_config_id: cfg.id,
+          directory: options.path || null,
+          filename: storedFilename,
+          file,
+          size: normalizedSize,
+          contentType: mimeType,
+          uploadId: options.uploadId || null,
+          userIdOrInfo,
+          userType,
+        });
+      }
+
+      // 服务端传输加密：Blob/表单上传转流式加密通道
+      if (await isFileTransferEncryptionEnabled(this.db)) {
+        const { createEncryptingTransform, computeCipherSize } = await import("../utils/fileEncryption.js");
+        const keyScopeId = crypto.randomUUID();
+        const { transform, meta, getCipherSize } = await createEncryptingTransform(keyScopeId, this.encryptionSecret, {});
+        const sourceStream = typeof file.stream === "function" ? file.stream() : null;
+        if (!sourceStream) {
+          throw new ValidationError("当前上传载荷不支持服务端加密，请改用流式上传接口");
+        }
+        const cipherStream = sourceStream.pipeThrough(transform);
+        const expectedCipherSize = computeCipherSize(normalizedSize, meta.chunkSize);
+        const result = await store.uploadFileForShare({
+          storage_config_id: cfg.id,
+          directory: options.path || null,
+          filename: storedFilename,
+          file: cipherStream,
+          size: expectedCipherSize,
+          contentType: mimeType,
+          uploadId: options.uploadId || null,
+          userIdOrInfo,
+          userType,
+        });
+        meta.plainSize = normalizedSize;
+        meta.cipherSize = getCipherSize();
+        result.__encryptionMeta = meta;
+        return result;
+      }
+
+      return await store.uploadFileForShare({
+        storage_config_id: cfg.id,
+        directory: options.path || null,
+        filename: storedFilename,
+        file,
+        size: normalizedSize,
+        contentType: mimeType,
+        uploadId: options.uploadId || null,
+        userIdOrInfo,
+        userType,
+      });
+    })();
 
     const { shouldUseRandomSuffix } = await import("../utils/common.js");
     const useRandom = await shouldUseRandomSuffix(this.db).catch(() => false);
@@ -468,6 +568,7 @@ export class FileShareService {
       originalFilenameUsed: Boolean(options.originalFilename),
       storageConfig: cfg,
       updateIfExists: !useRandom,
+      encryptionMeta: normalizeClientEncryptionMeta(options.encryptionMeta) || uploadResult.__encryptionMeta || null,
     });
   }
 
@@ -479,16 +580,18 @@ export class FileShareService {
     const mountManager = new MountManager(this.db, this.encryptionSecret, this.repositoryFactory);
     const fileSystem = new FileSystem(mountManager);
     const fileInfo = await fileSystem.getFileInfo(fsPath, userIdOrInfo, userType);
-    if (!fileInfo || fileInfo.isDirectory) {
-      throw new ValidationError("只能为文件创建分享");
+    if (!fileInfo) {
+      throw new ValidationError("路径不存在");
     }
+    const isDirectory = !!fileInfo.isDirectory;
     const { mount, subPath } = await mountManager.getDriverByPath(fsPath, userIdOrInfo, userType);
     return await this.records.createShareRecord({
       mount,
       fsPath,
+      targetType: isDirectory ? "folder" : "file",
       storageSubPath: subPath || "",
       filename: fileInfo.name,
-      size: fileInfo.size || 0,
+      size: isDirectory ? 0 : (fileInfo.size || 0),
       remark: options.remark || `来自文件系统: ${fsPath}`,
       userIdOrInfo,
       userType,
@@ -498,10 +601,11 @@ export class FileShareService {
       expiresInHours: options.expiresIn || 0,
       maxViews: options.maxViews || 0,
       useProxy: options.useProxy,
-      mimeType: fileInfo.mimetype || fileInfo.mimeType || undefined,
+      mimeType: isDirectory ? "inode/directory" : (fileInfo.mimetype || fileInfo.mimeType || undefined),
       request: options.request || null,
       uploadResult: null,
       originalFilenameUsed: true,
+      encryptionMeta: normalizeClientEncryptionMeta(options.encryptionMeta),
     });
   }
 

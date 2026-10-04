@@ -97,6 +97,33 @@
 - **Docker Deployment**: Frontend and backend images + Docker Compose one-click startup
 - **Multi-platform**: Supports Cloudflare, Vercel, ClawCloud, HuggingFace,etc.
 
+## 🔐 File Transfer Encryption
+
+CloudPaste offers dual-mode file content encryption with performance in mind:
+
+### Server-side transparent encryption (admin toggle, off by default)
+
+- Admin panel → Global Settings → Security → "Server-side file transfer encryption"
+- When enabled, newly uploaded shared files are encrypted with **AES-256-GCM (CPENC1 chunked format)** before being written to storage and decrypted transparently on download; the frontend and existing links remain compatible
+- Performance: uses the platform-native WebCrypto (hardware accelerated); only affects new uploads and costs nothing while the toggle is off
+- Note: encrypted files are always served via proxy (302 direct links disabled); S3 presigned direct upload and resumable upload fall back to proxy upload automatically. Workers free plan has a low CPU limit — use the paid plan or Docker deployment for large files
+
+### End-to-end encryption (E2E, opt-in at share creation)
+
+- Check **End-to-end encryption** in the upload-and-share modal: files are encrypted in the browser before upload, so the server, storage bucket and database only ever hold ciphertext
+- The key lives only in the share link fragment (`#e2ek=...`) and is never sent to the server; **anyone with the full link can decrypt** — combine with an access password for two-layer protection
+- Viewers decrypt in their browser for preview/download; a link without the key fragment cannot reveal plaintext
+- v1 uses in-memory encryption: keep single files under ~200MB
+
+### Additional hardening in this release
+
+- Share passwords no longer appear in URLs: verification now issues a short-lived HMAC access token (`?at=`); legacy `?password=` links keep working
+- Password hashing upgraded to PBKDF2-SHA256 (salted; iterations configurable via `PBKDF2_ITERATIONS`, default 100000) with automatic upgrade of legacy records
+- Storage credential encryption upgraded to real AES-256-GCM (legacy `encrypted:` values remain readable)
+- Proxy signature verification now uses constant-time comparison; new "Force HTTPS" toggle (308 redirect + HSTS, recommended for Docker/self-hosted deployments)
+
+> Important: `ENCRYPTION_SECRET` is the master key of the encryption system — keep it safe and back it up. Rotating it makes existing encrypted files recoverable only with the old key. Keep the full share link (including `#e2ek=`) for E2E shares.
+
 ## 🚀 Deployment Guide
 
 ### Prerequisites

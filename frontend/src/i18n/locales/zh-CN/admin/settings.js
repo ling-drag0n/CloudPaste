@@ -26,6 +26,14 @@ export default {
       expiresHint: "设置代理签名的过期时间，0表示永不过期",
       expiresUnit: "秒",
     },
+    securitySettings: {
+      title: "安全设置",
+      description: "文件传输加密与 HTTPS 强制策略",
+      fileEncryptionLabel: "服务端文件传输加密",
+      fileEncryptionHint: "开启后新上传的分享文件以 AES-256-GCM 加密存储，下载时代理解密；加密文件强制走代理访问，预签名直传与断点续传将自动回退",
+      forceHttpsLabel: "强制 HTTPS",
+      forceHttpsHint: "开启后 HTTP 请求将 308 跳转到 HTTPS 并附加 HSTS 头，Docker/自建部署建议开启",
+    },
     buttons: {
       updateSettings: "更新设置",
       updating: "更新中...",

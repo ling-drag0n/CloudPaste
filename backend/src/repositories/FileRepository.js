@@ -159,6 +159,25 @@ export class FileRepository extends BaseRepository {
   }
 
   /**
+   * 原子递增下载次数（复用 views 列作为下载计数）
+   * @param {string} fileId - 文件ID
+   * @returns {Promise<Object>} 更新结果
+   */
+  async incrementDownloads(fileId) {
+    return await this.execute(`UPDATE ${DbTables.FILES} SET views = views + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [fileId]);
+  }
+
+  /**
+   * 获取文件当前下载计数（views 列）
+   * @param {string} fileId - 文件ID
+   * @returns {Promise<number>} 当前计数
+   */
+  async getViews(fileId) {
+    const result = await this.queryFirst(`SELECT views FROM ${DbTables.FILES} WHERE id = ?`, [fileId]);
+    return result?.views || 0;
+  }
+
+  /**
    * 删除文件记录
    * @param {string} fileId - 文件ID
    * @returns {Promise<Object>} 删除结果
@@ -381,7 +400,7 @@ export class FileRepository extends BaseRepository {
         f.id, f.filename, f.slug, f.storage_path, f.storage_config_id,
         f.storage_type, f.file_path, f.mimetype, f.size, f.remark,
         f.created_at, f.views, f.max_views, f.expires_at, f.etag,
-        f.password, f.created_by, f.use_proxy,
+        f.password, f.created_by, f.use_proxy, f.target_type,
         s.name as storage_config_name,
         CASE
           WHEN f.storage_type = 'S3'
@@ -530,7 +549,7 @@ export class FileRepository extends BaseRepository {
         f.id, f.filename, f.slug, f.storage_path, f.storage_config_id,
         f.storage_type, f.file_path, f.mimetype, f.size, f.remark,
         f.created_at, f.views, f.max_views, f.expires_at, f.etag,
-        f.password, f.created_by, f.use_proxy,
+        f.password, f.created_by, f.use_proxy, f.target_type,
         s.name as storage_config_name,
         CASE
           WHEN f.storage_type = 'S3'

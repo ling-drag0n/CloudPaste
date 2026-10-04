@@ -469,7 +469,7 @@ import { ref, computed, onMounted } from "vue";
 import { useLocalStorage } from "@vueuse/core";
 import { useI18n } from "vue-i18n";
 import { useSiteConfigStore } from "@/stores/siteConfigStore.js";
-import { IconBellAlert, IconBookOpen, IconChartBar, IconChevronDown, IconChevronLeft, IconChevronRight, IconCircleStack, IconCloud, IconClose, IconDocumentText, IconEye, IconFolder, IconGlobeAlt, IconHome, IconInformationCircle, IconKey, IconLink, IconLogout, IconMenu, IconSearch, IconServerStack, IconSettings, IconTaskList, IconUser, IconList } from "@/components/icons";
+import { IconBellAlert, IconBookOpen, IconChartBar, IconChevronDown, IconChevronLeft, IconChevronRight, IconCircleStack, IconCloud, IconClose, IconDocumentText, IconEye, IconFolder, IconGlobeAlt, IconHome, IconInformationCircle, IconKey, IconLink, IconLogout, IconMenu, IconSearch, IconServerStack, IconSettings, IconShare, IconTaskList, IconUser, IconList } from "@/components/icons";
 
 // 使用i18n和站点配置Store
 const { t } = useI18n();
@@ -531,6 +531,7 @@ const menuIconMap = {
   'clipboard-list': IconTaskList,
   'bell-alert': IconBellAlert,
   'list-bullet': IconList,
+  share: IconShare,
   key: IconKey,
   user: IconUser,
   'circle-stack': IconCircleStack,
@@ -556,6 +557,7 @@ const visibleMenuItems = computed(() => {
       { id: "dashboard", name: t("admin.sidebar.dashboard"), icon: "chart-bar", type: "item", routeName: "AdminDashboard" },
       { id: "text-management", name: t("admin.sidebar.textManagement"), icon: "document-text", type: "item", routeName: "AdminTextManagement" },
       { id: "file-management", name: t("admin.sidebar.fileManagement"), icon: "folder", type: "item", routeName: "AdminFileManagement" },
+      { id: "share-management", name: t("admin.sidebar.shareManagement"), icon: "share", type: "item", routeName: "AdminShareManagement" },
       { id: "storage", name: t("admin.sidebar.storageConfig"), icon: "cloud", type: "item", routeName: "AdminStorage" },
       { id: "mount-management", name: t("admin.sidebar.mountManagement"), icon: "server", type: "item", routeName: "AdminMountManagement" },
       { id: "fs-meta-management", name: t("admin.sidebar.fsMetaManagement"), icon: "information-circle", type: "item", routeName: "AdminFsMetaManagement" },
@@ -597,6 +599,7 @@ const visibleMenuItems = computed(() => {
 
   if (props.permissions.file) {
     items.push({ id: "file-management", name: t("admin.sidebar.fileManagement"), icon: "folder", type: "item", routeName: "AdminFileManagement" });
+    items.push({ id: "share-management", name: t("admin.sidebar.shareManagement"), icon: "share", type: "item", routeName: "AdminShareManagement" });
   }
 
   if (props.permissions.mount) {

@@ -26,6 +26,7 @@ export class ShareRecordService {
   async createShareRecord({
     mount,
     fsPath,
+    targetType = "file",
     storageSubPath = "",
     filename,
     size,
@@ -44,12 +45,14 @@ export class ShareRecordService {
     originalFilenameUsed = true,
     storageConfig = null,
     updateIfExists = false,
+    encryptionMeta = null,
   }) {
     if (!mount?.storage_config_id && !storageConfig) {
       throw new ValidationError("缺少挂载或存储配置，无法创建分享");
     }
 
     const createdBy = this.resolveCreatedBy(userIdOrInfo, userType);
+    const finalTargetType = targetType === "folder" ? "folder" : "file";
 
     const finalSlug = await generateUniqueFileSlug(this.db, slug, override, {
       userIdOrInfo,
@@ -84,6 +87,9 @@ export class ShareRecordService {
     }
     const passwordHash = password ? await hashPassword(password) : null;
     const normalizedMimeType = mimeType ?? getEffectiveMimeType(undefined, filename) ?? "application/octet-stream";
+    // 加密元数据：对象则序列化，null 表示未加密（覆盖上传时显式清空旧值）
+    const encryptionMetaJson =
+      encryptionMeta && typeof encryptionMeta === "object" ? JSON.stringify(encryptionMeta) : null;
 
     // 存储路径语义：
     // - FS 挂载创建分享：storageSubPath 来自 MountManager，可能带前导 "/"，这里统一去掉
@@ -110,11 +116,13 @@ export class ShareRecordService {
           filename,
           size,
           mimetype: normalizedMimeType,
+          target_type: finalTargetType,
           etag: uploadResult?.etag || null,
           remark,
           expires_at: expiresAt,
           max_views: maxViewsValue,
           use_proxy: useProxyFlag,
+          encryption_meta: encryptionMetaJson,
           updated_at: now,
         });
 
@@ -138,6 +146,7 @@ export class ShareRecordService {
           storage_type: storageType,
           storage_path: storagePath,
           file_path: fsPath,
+          target_type: finalTargetType,
           use_proxy: useProxyFlag,
           public_url: uploadResult?.publicUrl || null,
           etag: uploadResult?.etag || null,
@@ -160,12 +169,14 @@ export class ShareRecordService {
           views: views,
           max_views: maxViewsValue,
           expires_at: expiresAt,
-          url: `/file/${existing.slug}`,
+          url: finalTargetType === "folder" ? `/folder/${existing.slug}` : `/file/${existing.slug}`,
           use_proxy: useProxyFlag,
+          encryption_mode: encryptionMeta ? encryptionMeta.mode : null,
           created_by: existing.created_by,
           used_original_filename: originalFilenameUsed,
           storage_path: storagePath,
           storage_type: storageType,
+          target_type: finalTargetType,
         };
       }
     }
@@ -180,6 +191,7 @@ export class ShareRecordService {
       storage_path: storagePath,
       file_path: fsPath,
       mimetype: normalizedMimeType,
+      target_type: finalTargetType,
       size,
       etag: uploadResult?.etag || null,
       remark,
@@ -187,6 +199,7 @@ export class ShareRecordService {
       expires_at: expiresAt,
       max_views: maxViewsValue,
       use_proxy: useProxyFlag,
+      encryption_meta: encryptionMetaJson,
       created_by: createdBy,
       created_at: now,
       updated_at: now,
@@ -208,6 +221,7 @@ export class ShareRecordService {
       storage_type: storageType,
       storage_path: storagePath,
       file_path: fsPath,
+      target_type: finalTargetType,
       use_proxy: useProxyFlag,
       public_url: uploadResult?.publicUrl || null,
       etag: uploadResult?.etag || null,
@@ -231,12 +245,14 @@ export class ShareRecordService {
       max_views: maxViewsValue,
       expires_at: expiresAt,
       // 分享页 URL，前端通过该地址进入 fileshare 视图
-      url: `/file/${finalSlug}`,
+      url: finalTargetType === "folder" ? `/folder/${finalSlug}` : `/file/${finalSlug}`,
       use_proxy: useProxyFlag,
+      encryption_mode: encryptionMeta ? encryptionMeta.mode : null,
       created_by: createdBy,
       used_original_filename: originalFilenameUsed,
       storage_path: storagePath,
       storage_type: storageType,
+      target_type: finalTargetType,
     };
 
     return response;

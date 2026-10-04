@@ -5,6 +5,8 @@
 
 import { ensureRepositoryFactory } from "../utils/repositories.js";
 import { verifyPassword } from "../utils/crypto.js";
+import { verifyShareAccessToken } from "../utils/shareAccessToken.js";
+import { parseEncryptionMeta } from "../utils/fileEncryption.js";
 import { getEffectiveMimeType, getContentTypeAndDisposition } from "../utils/fileUtils.js";
 import { getFileBySlug, isFileAccessible } from "./fileService.js";
 import { ObjectStore } from "../storage/object/ObjectStore.js";
@@ -82,17 +84,24 @@ export class FileViewService {
 
       // 检查文件是否受密码保护
       if (file.password) {
-        // 如果有密码，检查URL中是否包含密码参数
         const url = new URL(request.url);
-        const passwordParam = url.searchParams.get("password");
-
-        if (!passwordParam) {
-          return new Response("需要密码访问此文件", { status: 401 });
+        // 优先校验短时效访问令牌（?at=，由密码验证接口签发，避免密码进 URL）
+        let authorized = false;
+        const atToken = url.searchParams.get("at");
+        if (atToken) {
+          authorized = await verifyShareAccessToken(this.encryptionSecret, atToken, { type: "file", slug });
         }
 
-        // 验证密码
-        const passwordValid = await verifyPassword(passwordParam, file.password);
-        if (!passwordValid) {
+        // 兼容旧链接：?password= 明文参数
+        if (!authorized) {
+          const passwordParam = url.searchParams.get("password");
+          if (!passwordParam) {
+            return new Response("需要密码访问此文件", { status: 401 });
+          }
+          authorized = await verifyPassword(passwordParam, file.password);
+        }
+
+        if (!authorized) {
           return new Response("密码错误", { status: 401 });
         }
       }
@@ -134,7 +143,9 @@ export class FileViewService {
 
       const fileRecord = result.file;
       const useProxyFlag = fileRecord.use_proxy ?? 0;
-      const forceProxy = options && options.forceProxy === true;
+      // 加密文件（server/e2e）一律强制本地代理：server 模式由代理层解密，e2e 模式保证前端同源取密文
+      const encryptionMeta = parseEncryptionMeta(fileRecord.encryption_meta || null);
+      const forceProxy = (options && options.forceProxy === true) || !!encryptionMeta;
 
       // 文本类预览优先走本地代理，以避免直链 CORS 与内容类型差异
       const isInline = !forceDownload;
@@ -180,6 +191,7 @@ export class FileViewService {
           request,
           db: this.db,
           repositoryFactory: this.repositoryFactory,
+          encryptionMeta: encryptionMeta && encryptionMeta.mode === "server" ? encryptionMeta : null,
           ...(owner ? owner : null),
         });
 

@@ -29,6 +29,12 @@ const signSettings = ref({
   expires: 0,
 });
 
+// 安全设置（传输加密 / 强制 HTTPS）
+const securitySettings = ref({
+  fileTransferEncryption: false,
+  forceHttps: false,
+});
+
 // 可选的大小单位
 const sizeUnits = ["KB", "MB", "GB"];
 
@@ -36,6 +42,7 @@ const sizeUnits = ["KB", "MB", "GB"];
 const isLoading = ref(false);
 const isSavingUpload = ref(false);
 const isSavingSign = ref(false);
+const isSavingSecurity = ref(false);
 
 // ============ 计算属性 ============
 
@@ -67,6 +74,12 @@ onMounted(async () => {
           break;
         case "proxy_sign_expires":
           signSettings.value.expires = parseInt(setting.value) || 0;
+          break;
+        case "file_transfer_encryption":
+          securitySettings.value.fileTransferEncryption = setting.value === "true";
+          break;
+        case "force_https":
+          securitySettings.value.forceHttps = setting.value === "true";
           break;
       }
     });
@@ -134,6 +147,24 @@ const handleSaveSign = async () => {
     showError(error.message || t("admin.global.messages.updateFailed"));
   } finally {
     isSavingSign.value = false;
+  }
+};
+
+// 保存安全设置
+const handleSaveSecurity = async () => {
+  isSavingSecurity.value = true;
+  try {
+    await updateGlobalSettings({
+      file_transfer_encryption: securitySettings.value.fileTransferEncryption.toString(),
+      force_https: securitySettings.value.forceHttps.toString(),
+    });
+
+    showSuccess(t("admin.global.messages.updateSuccess"));
+  } catch (error) {
+    log.error("更新安全设置失败:", error);
+    showError(error.message || t("admin.global.messages.updateFailed"));
+  } finally {
+    isSavingSecurity.value = false;
   }
 };
 </script>
@@ -358,6 +389,84 @@ const handleSaveSign = async () => {
           >
             <IconRefresh v-if="isSavingSign" size="sm" class="animate-spin -ml-0.5 mr-2" />
             {{ isSavingSign ? t("admin.global.buttons.updating") : t("admin.global.buttons.updateSettings") }}
+          </button>
+        </div>
+      </section>
+
+      <!-- 安全设置：传输加密 + 强制 HTTPS -->
+      <section
+        class="rounded-xl border transition-colors"
+        :class="darkMode ? 'bg-gray-800/50 border-gray-700' : 'bg-white border-gray-200'"
+      >
+        <!-- 卡片头部 -->
+        <div class="px-5 py-4 border-b" :class="darkMode ? 'border-gray-700' : 'border-gray-200'">
+          <div class="flex items-center gap-3">
+            <div
+              class="flex items-center justify-center w-9 h-9 rounded-lg"
+              :class="darkMode ? 'bg-emerald-500/20' : 'bg-emerald-50'"
+            >
+              <IconShieldCheck size="sm" :class="darkMode ? 'text-emerald-400' : 'text-emerald-600'" />
+            </div>
+            <div>
+              <h2 class="text-base font-semibold" :class="darkMode ? 'text-white' : 'text-gray-900'">
+                {{ t("admin.global.securitySettings.title") }}
+              </h2>
+              <p class="text-xs" :class="darkMode ? 'text-gray-400' : 'text-gray-500'">
+                {{ t("admin.global.securitySettings.description") }}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- 卡片内容 -->
+        <div class="p-5 space-y-4">
+          <!-- 服务端文件传输加密 -->
+          <div class="flex items-center justify-between gap-4">
+            <div class="flex-1 min-w-0">
+              <label class="block text-sm font-medium" :class="darkMode ? 'text-gray-200' : 'text-gray-700'">
+                {{ t("admin.global.securitySettings.fileEncryptionLabel") }}
+              </label>
+              <p class="text-xs mt-0.5" :class="darkMode ? 'text-gray-400' : 'text-gray-500'">
+                {{ t("admin.global.securitySettings.fileEncryptionHint") }}
+              </p>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer flex-shrink-0">
+              <input type="checkbox" v-model="securitySettings.fileTransferEncryption" class="sr-only peer" />
+              <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-500/20 rounded-full peer dark:bg-gray-600 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+            </label>
+          </div>
+
+          <!-- 分隔线 -->
+          <div class="border-t" :class="darkMode ? 'border-gray-700' : 'border-gray-200'"></div>
+
+          <!-- 强制 HTTPS -->
+          <div class="flex items-center justify-between gap-4">
+            <div class="flex-1 min-w-0">
+              <label class="block text-sm font-medium" :class="darkMode ? 'text-gray-200' : 'text-gray-700'">
+                {{ t("admin.global.securitySettings.forceHttpsLabel") }}
+              </label>
+              <p class="text-xs mt-0.5" :class="darkMode ? 'text-gray-400' : 'text-gray-500'">
+                {{ t("admin.global.securitySettings.forceHttpsHint") }}
+              </p>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer flex-shrink-0">
+              <input type="checkbox" v-model="securitySettings.forceHttps" class="sr-only peer" />
+              <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-500/20 rounded-full peer dark:bg-gray-600 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+            </label>
+          </div>
+        </div>
+
+        <!-- 卡片底部：保存按钮 -->
+        <div class="px-5 py-4 border-t flex justify-end" :class="darkMode ? 'border-gray-700 bg-gray-800/30' : 'border-gray-100 bg-gray-50/50'">
+          <button
+            type="button"
+            @click="handleSaveSecurity"
+            :disabled="isSavingSecurity"
+            class="inline-flex items-center px-4 py-2 text-sm font-medium text-white rounded-lg transition-all focus:outline-none focus:ring-4 focus:ring-blue-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
+            :class="isSavingSecurity ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700 active:bg-blue-800'"
+          >
+            <IconRefresh v-if="isSavingSecurity" size="sm" class="animate-spin -ml-0.5 mr-2" />
+            {{ isSavingSecurity ? t("admin.global.buttons.updating") : t("admin.global.buttons.updateSettings") }}
           </button>
         </div>
       </section>

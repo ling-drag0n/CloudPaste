@@ -102,6 +102,15 @@
           <IconLink class="w-4 h-4 sm:w-5 sm:h-5" aria-hidden="true" />
         </button>
 
+        <!-- 生成分享链接按钮（文件与文件夹均支持）-->
+        <button
+          @click.stop="$emit('share', item)"
+          class="file-item__action-btn w-8 h-8 rounded-full flex items-center justify-center transition-all bg-transparent text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300 transform hover:scale-110"
+          :title="t('mount.contextMenu.createShare')"
+        >
+          <IconShare class="w-4 h-4 sm:w-5 sm:h-5" aria-hidden="true" />
+        </button>
+
         <!-- 重命名按钮 -->
         <button
           v-if="!item.isDirectory"
@@ -128,7 +137,7 @@
 <script setup>
 import { ref, computed, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
-import { IconDelete, IconDownload, IconLink, IconRename } from "@/components/icons";
+import { IconDelete, IconDownload, IconLink, IconRename, IconShare } from "@/components/icons";
 import { formatFileSize } from "@/utils/fileUtils.js";
 import { getFileIcon as getFileIconSvg } from "@/utils/fileTypeIcons.js";
 import { formatDateTime } from "@/utils/timeUtils.js";
@@ -151,7 +160,7 @@ const props = defineProps({
   showActionButtons: { type: Boolean, default: true },
 });
 
-const emit = defineEmits(["click", "download", "rename", "delete", "select", "getLink", "contextmenu"]);
+const emit = defineEmits(["click", "download", "rename", "delete", "select", "getLink", "share", "contextmenu"]);
 
 // 缓存文件图标 SVG，避免每次渲染重复计算
 const fileIcon = computed(() => getFileIconSvg(props.item, props.darkMode));

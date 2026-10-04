@@ -269,6 +269,10 @@ systemRoutes.put("/api/admin/settings/group/:groupId", requireAdmin, async (c) =
   const validateType = getQueryBool(c, "validate", true);
   const result = await updateGroupSettings(db, groupId, body, { validateType }, repositoryFactory);
 
+  // 安全设置（file_transfer_encryption / force_https）带 30s 进程内缓存，更新后立即失效
+  const { clearSecuritySettingsCache } = await import("../utils/securitySettings.js");
+  clearSecuritySettingsCache();
+
   return jsonOk(c, result, result.message);
 });
 

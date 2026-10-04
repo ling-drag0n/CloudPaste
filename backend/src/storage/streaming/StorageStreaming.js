@@ -22,6 +22,11 @@ import { STREAMING_CHANNELS } from "./types.js";
 import { NotFoundError, DriverError } from "../../http/errors.js";
 import { ApiStatus } from "../../constants/index.js";
 import { smartWrapStreamWithByteSlice } from "./ByteSliceStream.js";
+import {
+  createDecryptingTransform,
+  mapPlainRangeToCipherRange,
+  parseEncryptionMeta,
+} from "../../utils/fileEncryption.js";
 
 // 视频“超大跳转”保护阈值（固定值，跟随 OpenList 的经验阈值）：
 // - OpenList 在“上游不支持 Range，只能读掉 offset 再丢弃”的兜底里，对 offset > 100MB 会明确警告浪费带宽
@@ -474,6 +479,13 @@ export class StorageStreaming {
    */
   async createResponse(options) {
     try {
+      // 加密文件专用通道（CPENC1 server 模式）：在本层按块解密后返回明文；
+      // e2e 模式不在此解密（服务端无密钥），走常规机制原样返回密文，由前端解密。
+      const encMeta = parseEncryptionMeta(options?.encryptionMeta || null);
+      if (encMeta && encMeta.mode === "server") {
+        return await this._createEncryptedResponse(options, encMeta);
+      }
+
       const reader = await this.getRangeReader(options);
       let { status, headers } = reader;
 
@@ -595,6 +607,152 @@ export class StorageStreaming {
       status: ApiStatus.INTERNAL_ERROR,
       code: "STREAMING_ERROR.INVALID_DOWNLOAD_RESULT",
     });
+  }
+
+  /**
+   * 加密文件（CPENC1 server 模式）专用响应构造：
+   * - 按明文坐标系解析 Range，映射到块对齐的密文区间，仅解密覆盖块（保留 206/视频拖动）
+   * - 上游不支持 Range 时降级为 200 全量解密
+   * - ETag 透传密文对象的 ETag（本层响应的强缓存语义有限，条件请求降级处理）
+   * @param {RangeReaderOptions} options
+   * @param {object} meta 已解析的加密元数据
+   * @returns {Promise<Response>}
+   * @private
+   */
+  async _createEncryptedResponse(options, meta) {
+    const logPrefix = `[StorageStreaming][${options.channel}][enc]`;
+    const request = options.request;
+    const rangeHeader = options?.rangeHeader ?? request?.headers?.get?.("range") ?? null;
+
+    // 1. 解析驱动与描述符（密文坐标系）
+    const { driver, resolvedMount, subPath } = await this._resolveDriver(options);
+    const descriptor = this._adaptToDescriptor(
+      await driver.downloadFile(subPath, {
+        path: options.path,
+        mount: resolvedMount,
+        subPath,
+        db: options.db,
+        request,
+        userIdOrInfo: options.userIdOrInfo,
+        userType: options.userType,
+        ownerType: options.ownerType,
+        ownerId: options.ownerId,
+      }),
+    );
+
+    const plainSize = Number(meta.plainSize) || 0;
+    const headers = new Headers();
+    headers.set("Accept-Ranges", "bytes");
+    if (descriptor.contentType) {
+      headers.set("Content-Type", descriptor.contentType);
+    }
+    if (descriptor.etag) {
+      headers.set("ETag", descriptor.etag);
+    }
+
+    // 2. 明文坐标系单段 Range 解析
+    const parsePlainRange = (header) => {
+      const m = /^bytes=(\d*)-(\d*)$/.exec(String(header || "").trim());
+      if (!m || (m[1] === "" && m[2] === "")) return null;
+      let start;
+      let end;
+      if (m[1] === "") {
+        const suffix = Number(m[2]);
+        if (!Number.isFinite(suffix) || suffix <= 0) return null;
+        if (plainSize <= 0) return { satisfiable: false };
+        start = Math.max(0, plainSize - suffix);
+        end = plainSize - 1;
+      } else {
+        start = Number(m[1]);
+        if (!Number.isFinite(start) || start >= plainSize) {
+          return Number.isFinite(start) ? { satisfiable: false } : null;
+        }
+        end = m[2] === "" ? plainSize - 1 : Math.min(Number(m[2]), plainSize - 1);
+        end = Math.max(start, Number.isFinite(end) ? end : plainSize - 1);
+      }
+      return { satisfiable: true, start, end };
+    };
+
+    // HEAD：只回头部，不触发底层流
+    if (request?.method === "HEAD") {
+      if (plainSize > 0) {
+        headers.set("Content-Length", String(plainSize));
+      }
+      return new Response(null, { status: 200, headers });
+    }
+
+    const range = rangeHeader ? parsePlainRange(rangeHeader) : null;
+    if (range && !range.satisfiable) {
+      console.log(`${logPrefix} Range 超出明文范围，返回 416`);
+      const h = new Headers(headers);
+      h.set("Content-Range", `bytes */${plainSize}`);
+      return new Response(null, { status: 416, headers: h });
+    }
+
+    const keyMaterial = { encryptionSecret: this.encryptionSecret };
+    const closeSafe = async (handle) => {
+      try {
+        await handle?.close?.();
+      } catch {
+        // ignore
+      }
+    };
+
+    /** 将密文流（Web 或 Node）接上解密层并挂 close 回调 */
+    const buildBody = async (handle, transform) => {
+      let webStream;
+      if (handle.stream && (typeof handle.stream.pipe === "function" || typeof handle.stream.on === "function")) {
+        webStream = await wrapNodeReadableToWebStream(handle.stream, handle?.close);
+      } else {
+        webStream = wrapWebReadableStreamWithClose(handle.stream, handle?.close);
+      }
+      const piped = webStream.pipeThrough(transform);
+      return wrapWebReadableStreamWithClose(piped, async () => closeSafe(handle));
+    };
+
+    if (range) {
+      const mapped = mapPlainRangeToCipherRange(meta, range.start, range.end);
+      let handle = null;
+      let transform;
+
+      if (typeof descriptor.getRange === "function") {
+        handle = await descriptor.getRange({ start: mapped.cipherStart, end: mapped.cipherEnd });
+        transform = await createDecryptingTransform(meta, keyMaterial, {
+          startChunkIndex: mapped.firstChunk,
+          skipPlain: mapped.skipPlain,
+          maxPlain: mapped.maxPlain,
+          headerless: true,
+        });
+        console.log(
+          `${logPrefix} 206 块映射: 明文 ${range.start}-${range.end} -> 密文块 ${mapped.firstChunk}-${mapped.lastChunk} (${mapped.cipherStart}-${mapped.cipherEnd})`,
+        );
+      } else {
+        // 上游不支持 Range：降级 200 全量解密，避免“读掉 offset 再丢弃”的浪费
+        console.log(`${logPrefix} 驱动不支持 getRange，忽略 Range 返回 200 全量解密`);
+        handle = await descriptor.getStream();
+        transform = await createDecryptingTransform(meta, keyMaterial, {});
+      }
+
+      const status = typeof descriptor.getRange === "function" ? 206 : 200;
+      const body = await buildBody(handle, transform);
+      if (status === 206) {
+        headers.set("Content-Range", `bytes ${range.start}-${range.end}/${plainSize}`);
+        headers.set("Content-Length", String(mapped.maxPlain));
+      } else if (plainSize > 0) {
+        headers.set("Content-Length", String(plainSize));
+      }
+      return new Response(body, { status, headers });
+    }
+
+    // 无 Range：200 全量解密
+    const handle = await descriptor.getStream();
+    const transform = await createDecryptingTransform(meta, keyMaterial, {});
+    const body = await buildBody(handle, transform);
+    if (plainSize > 0) {
+      headers.set("Content-Length", String(plainSize));
+    }
+    console.log(`${logPrefix} 返回 200 OK（解密后 ${plainSize} 字节）`);
+    return new Response(body, { status: 200, headers });
   }
 
   /**

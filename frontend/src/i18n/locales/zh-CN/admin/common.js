@@ -41,6 +41,7 @@ export default {
     dashboard: "仪表板",
     textManagement: "文本管理",
     fileManagement: "文件管理",
+    shareManagement: "分享链接管理",
     storageConfig: "存储管理",
     mountManagement: "挂载管理",
     fsMetaManagement: "元信息管理",

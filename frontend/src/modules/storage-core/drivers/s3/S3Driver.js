@@ -2,7 +2,7 @@ import { createCapabilities, STORAGE_STRATEGIES } from "../types.js";
 import AwsS3 from "@uppy/aws-s3";
 import { StorageAdapter } from "@/modules/storage-core/uppy/StorageAdapter.js";
 import XHRUpload from "@uppy/xhr-upload";
-import { getFullApiUrl } from "@/api/config.js";
+import { getFullApiUrl, API_BASE_URL } from "@/api/config.js";
 import { buildAuthHeadersForRequest } from "@/modules/security/index.js";
 import { api } from "@/api";
 import { createLogger } from "@/utils/logger.js";
@@ -226,6 +226,12 @@ export class S3Driver {
         });
 
         if (!presign?.success || !presign?.data) {
+          // 服务端传输加密开启时，后端拒绝预签名直传（字节绕过后端无法加密）：
+          // 自动回退为代理流式上传（/share/upload），对用户透明。
+          if (presign?.code === "ENCRYPTION_REQUIRES_PROXY") {
+            log.info("[ShareUploader] 服务端加密已开启，预签名被拒绝，回退为代理流式上传:", fileName);
+            return await this.#proxyUploadShareFileFallback(uppy, file, { merged, meta, basePayload });
+          }
           throw new Error(presign?.message || "获取预签名URL失败");
         }
 
@@ -258,6 +264,8 @@ export class S3Driver {
     // 在成功后执行 commit
     const onSuccess = async (file) => {
       const meta = file?.meta || {};
+      // 预签名被拒后已通过代理通道完成上传并建档，无需再 commit
+      if (meta.proxyUploaded) return;
       try {
         const commitRes = await api.file.completeFileUpload({
           key: meta.key,
@@ -304,6 +312,76 @@ export class S3Driver {
 
     // 避免重复绑定
     uppy.on("upload-success", onSuccess);
+  }
+
+  /**
+   * 预签名被拒（ENCRYPTION_REQUIRES_PROXY）时的回退：直接走 PUT /share/upload 代理流式上传
+   * 复用 skipUpload 标记机制让 Uppy 将该文件标记为成功，share-record 已同步发出
+   */
+  async #proxyUploadShareFileFallback(uppy, file, { merged, meta, basePayload }) {
+    const fileName = typeof meta?.name === "string" && meta.name ? meta.name : file.name;
+    const options = {
+      storage_config_id: merged.storage_config_id,
+      path: merged.path,
+      slug: merged.slug,
+      remark: basePayload.remark,
+      password: basePayload.password ?? meta.password ?? null,
+      expires_in: basePayload.expires_in,
+      max_views: basePayload.max_views,
+      use_proxy: basePayload.use_proxy,
+      original_filename: basePayload.original_filename ?? false,
+    };
+
+    const body = file?.data instanceof Blob ? file.data : null;
+    if (!body) throw new Error("无法读取文件内容进行代理上传");
+
+    const authHeaders = buildAuthHeadersForRequest({});
+    const response = await new Promise((resolve, reject) => {
+      try {
+        const xhr = new XMLHttpRequest();
+        xhr.open("PUT", getFullApiUrl("/share/upload"));
+        xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+        xhr.setRequestHeader("x-share-filename", encodeURIComponent(fileName));
+        try {
+          xhr.setRequestHeader("x-share-options", btoa(JSON.stringify(options)));
+        } catch {}
+        for (const [k, v] of Object.entries(authHeaders)) {
+          try {
+            xhr.setRequestHeader(k, v);
+          } catch {}
+        }
+        xhr.onload = () => {
+          try {
+            resolve(JSON.parse(xhr.responseText));
+          } catch {
+            reject(new Error(`代理上传响应解析失败（HTTP ${xhr.status}）`));
+          }
+        };
+        xhr.onerror = () => reject(new Error("代理上传网络错误"));
+        xhr.send(body);
+      } catch (e) {
+        reject(e);
+      }
+    });
+
+    if (!response?.success) {
+      throw new Error(response?.message || "代理上传失败");
+    }
+
+    const shareRecord = response.data || {};
+    try {
+      uppy.setFileMeta(file.id, { proxyUploaded: true, shareRecord, fileId: shareRecord.id });
+    } catch {}
+    try {
+      uppy.emit("share-record", { file, shareRecord });
+    } catch {}
+
+    // 复用 skipUpload 协议：跳过真实 PUT，让 Uppy 进入成功状态
+    return {
+      method: "PUT",
+      url: `${API_BASE_URL}/__uppy_skip_upload__`,
+      headers: { "x-cloudpaste-skip-upload": "1" },
+    };
   }
 
   /**

@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import { ensureRepositoryFactory } from "../utils/repositories.js";
+import { timingSafeEqualStrings } from "../utils/fileEncryption.js";
 
 /**
  * 代理签名服务
@@ -181,7 +182,8 @@ export class ProxySignatureService {
       hmac.update(signData);
       const expectedHash = hmac.digest("base64");
 
-      const isValid = hash === expectedHash;
+      // 常量时间比较，避免时序侧信道
+      const isValid = timingSafeEqualStrings(hash, expectedHash);
       return {
         valid: isValid,
         reason: isValid ? "valid" : "invalid_signature",

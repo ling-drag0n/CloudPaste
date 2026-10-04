@@ -5,6 +5,62 @@ export default {
     error: "加载失败",
     notFound: "文件不存在",
 
+    // 文件夹分享（公开只读）
+    folder: {
+      title: "文件夹分享",
+      loading: "加载中...",
+      errorState: "无法访问分享",
+      emptyFolder: "此文件夹为空",
+      itemCount: "共 {count} 项",
+      back: "返回",
+      meta: {
+        remainingDownloads: "剩余下载次数",
+        downloadsUsed: "已下载 {views} 次",
+        unlimitedDownloads: "不限次数",
+        expiresAt: "过期时间",
+        noExpiry: "永久有效",
+      },
+      password: {
+        title: "请输入访问密码",
+        description: "此文件夹已被密码保护，请输入密码查看内容",
+        label: "密码",
+        placeholder: "请输入密码",
+        submit: "确认",
+        loading: "验证中...",
+      },
+      table: {
+        name: "名称",
+        size: "大小",
+        modified: "修改时间",
+        actions: "操作",
+      },
+      actions: {
+        download: "下载",
+        preview: "预览",
+        openFolder: "打开",
+        refresh: "刷新",
+      },
+      viewMode: {
+        list: "列表视图",
+        grid: "宫格视图",
+      },
+      preview: {
+        title: "文件预览",
+        loading: "加载中...",
+        error: "预览加载失败",
+        notSupported: "此文件类型不支持在线预览，请下载后查看",
+        download: "下载文件",
+        close: "关闭",
+      },
+      errors: {
+        expired: "分享已过期或已达下载次数上限",
+        notFound: "分享不存在或已被删除",
+        wrongPassword: "密码错误，请重试",
+        loadFailed: "无法加载分享信息",
+        listFailed: "加载目录失败",
+      },
+    },
+
     // 文件信息
     fileInfo: {
       filename: "文件名",
@@ -16,7 +72,7 @@ export default {
       copyLink: "复制链接",
       linkCopied: "链接已复制到剪贴板",
       copyFailed: "复制失败",
-      accessCount: "访问次数",
+      accessCount: "下载次数",
       expiresAt: "过期时间",
       accessMode: "访问模式",
       proxyAccess: "本地代理访问",
@@ -252,6 +308,7 @@ export default {
       notFound: "文件不存在",
       unknown: "未知错误",
       missingSlug: "缺少文件标识符",
+      missingId: "缺少文件 ID",
       loadFailed: "无法加载文件信息",
       getDetailsFailed: "获取详情失败",
       getDetailsFailedMessage: "获取文件详情失败，将使用当前显示的信息",

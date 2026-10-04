@@ -112,7 +112,15 @@ async function verifyFsSign(path, sign, secret) {
 
   const base = await hmacSha256Base64(secret, `${path}:${expireStr}`);
   const expected = `${base}:${expireStr}`;
-  if (expected !== sign) return "sign mismatch";
+  // 常量时间比较，避免时序侧信道
+  const a = String(expected);
+  const b = String(sign);
+  const maxLen = Math.max(a.length, b.length);
+  let diff = a.length ^ b.length;
+  for (let i = 0; i < maxLen; i += 1) {
+    diff |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
+  }
+  if (diff !== 0) return "sign mismatch";
   return "";
 }
 

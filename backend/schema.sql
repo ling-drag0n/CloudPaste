@@ -140,6 +140,8 @@ CREATE TABLE files (
   max_views INTEGER,                   -- 最大查看次数
   views INTEGER DEFAULT 0,             -- 当前查看次数
   use_proxy BOOLEAN DEFAULT 0,         -- 是否使用代理访问
+  target_type TEXT NOT NULL DEFAULT 'file', -- 分享目标类型：file | folder
+  encryption_meta TEXT,                -- 文件加密元数据（CPENC1 JSON；NULL=未加密）
 
   -- 元数据
   created_by TEXT,                     -- 创建者

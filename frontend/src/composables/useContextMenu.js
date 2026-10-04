@@ -13,13 +13,15 @@ import {
   IconShoppingCart,
   IconCheckbox,
   IconRename,
-  IconDelete
+  IconDelete,
+  IconShare
 } from '@/components/icons'
 
 // 图标渲染函数
 const icons = {
   download: () => h(IconDownload, { size: 'sm' }),
   link: () => h(IconLink, { size: 'sm' }),
+  share: () => h(IconShare, { size: 'sm' }),
   copy: () => h(IconCopy, { size: 'sm' }),
   basket: () => h(IconShoppingCart, { size: 'sm' }),
   checkbox: () => h(IconCheckbox, { size: 'sm' }),
@@ -32,6 +34,7 @@ const icons = {
  * @param {Object} options - 配置选项
  * @param {Function} options.onDownload - 下载回调
  * @param {Function} options.onGetLink - 获取链接回调
+ * @param {Function} options.onShare - 生成分享链接回调（文件与文件夹均支持）
  * @param {Function} options.onRename - 重命名回调
  * @param {Function} options.onDelete - 删除回调
  * @param {Function} options.onCopy - 复制回调
@@ -41,7 +44,7 @@ const icons = {
  * @returns {Object} 右键菜单方法
  */
 export function useContextMenu(options = {}) {
-  const { onDownload, onGetLink, onRename, onDelete, onCopy, onAddToBasket, onToggleCheckboxes, t } = options
+  const { onDownload, onGetLink, onShare, onRename, onDelete, onCopy, onAddToBasket, onToggleCheckboxes, t } = options
   
   // 当前选中的项目
   const contextItem = ref(null)
@@ -76,6 +79,13 @@ export function useContextMenu(options = {}) {
       label: t?.('mount.fileItem.copy') || '复制',
       icon: icons.copy,
       onClick: () => onCopy?.(item),
+    })
+
+    // 生成分享链接（文件与文件夹均支持）
+    items.push({
+      label: t?.('mount.contextMenu.createShare') || '生成分享链接',
+      icon: icons.share,
+      onClick: () => onShare?.(item),
     })
     
     // 添加到文件篮

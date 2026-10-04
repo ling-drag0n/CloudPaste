@@ -12,6 +12,7 @@ import { findMountPointByPathForProxy } from "../fs/utils/MountResolver.js";
 import { ProxySignatureService } from "../../services/ProxySignatureService.js";
 import { WORKER_ENTRY, buildSignedProxyUrl, buildSignedWorkerUrl } from "../../constants/proxy.js";
 import { UserType } from "../../constants/index.js";
+import { parseEncryptionMeta } from "../../utils/fileEncryption.js";
 
 /**
  * 将文件名转为 URL path segment 安全的形式（用于 /api/s/:slug/:filename）。
@@ -113,7 +114,10 @@ export class LinkService {
     const forceDownload = !!options.forceDownload;
 
     // 本地代理开关（share 视图使用 use_proxy 与 FS 的 web_proxy 语义一致）
-    const useProxyFlag = file?.use_proxy ?? 0;
+    // 加密文件（CPENC1）：强制走本地代理 —— server 模式需在代理层解密，
+    // e2e 模式需保证前端能同源带凭据取到密文（直链可能存在 CORS/凭据限制）。
+    const encryptionMeta = parseEncryptionMeta(file?.encryption_meta || null);
+    const useProxyFlag = (file?.use_proxy ?? 0) === 1 || !!encryptionMeta ? 1 : 0;
     const slug = file?.slug || null;
 
     // 分享记录缺少存储信息时，只能走应用层代理链路

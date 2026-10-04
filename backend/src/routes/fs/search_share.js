@@ -50,7 +50,7 @@ export const registerSearchShareRoutes = (router, helpers) => {
       const { userIdOrInfo, userType } = getServiceParams(userInfo);
 
       const body = c.get("jsonBody");
-      const { path } = body;
+      const { path, password, expires_in, max_views, remark, slug, encryption_meta } = body;
 
       if (!path) {
         throw new ValidationError("文件路径不能为空");
@@ -58,7 +58,14 @@ export const registerSearchShareRoutes = (router, helpers) => {
 
       const repositoryFactory = useRepositories(c);
       const svc = new FileShareService(db, encryptionSecret, repositoryFactory);
-      const result = await svc.createShareFromFileSystem(path, userIdOrInfo, userType);
+      const result = await svc.createShareFromFileSystem(path, userIdOrInfo, userType, {
+        password: password || null,
+        expiresIn: Number(expires_in) || 0,
+        maxViews: Number(max_views) || 0,
+        remark: remark || undefined,
+        slug: slug || null,
+        encryptionMeta: encryption_meta || null,
+      });
 
       return jsonOk(c, result, "分享创建成功");
     }

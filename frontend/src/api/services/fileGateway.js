@@ -1,5 +1,6 @@
 import * as fileService from "./fileService.js";
 import { getFilePassword } from "@/utils/filePasswordUtils.js";
+import { getFullApiUrl } from "@/api/config";
 
 function normalizeListResponse(response, limit, offset) {
   const payload = response?.data ?? response?.files ?? response;
@@ -67,18 +68,51 @@ function parseFileShareUrl(url) {
 }
 
 function ensurePasswordInUrl(url, password, file) {
-  if (!url || !password) return url || "";
+  if (!url || (!password && !file?.slug)) return url || "";
 
-  // 仅对 share 同源路由（/api/share/content/:slug 或 /api/s/:slug）追加密码
+  // 仅对 share 同源路由（/api/share/content/:slug 或 /api/s/:slug）追加凭据
   // 以及标记为 use_proxy 的文件，避免污染直链/CDN URL
   const shareInfo = parseFileShareUrl(url);
   const isProxy = shareInfo.isFileShare || file?.use_proxy;
 
   if (!isProxy) return url;
+
+  // 优先使用短时效访问令牌（?at=，由密码验证接口签发），避免明文密码进 URL
+  const slug = shareInfo.slug || file?.slug;
+  const token = slug ? getShareAccessToken(slug) : null;
+  if (token) {
+    if (url.includes("at=")) return url;
+    const separator = url.includes("?") ? "&" : "?";
+    return `${url}${separator}at=${encodeURIComponent(token)}`;
+  }
+
+  if (!password) return url;
   if (url.includes("password=")) return url;
 
   const separator = url.includes("?") ? "&" : "?";
   return `${url}${separator}password=${encodeURIComponent(password)}`;
+}
+
+/******************************************************************************
+ * 分享访问令牌（?at=）注册表
+ * - 密码验证成功后由 fileshareService 登记，URL 构建时优先使用
+ * - 仅存内存，刷新页面后重新验证
+ ******************************************************************************/
+const shareAccessTokenRegistry = new Map();
+
+export function registerShareAccessToken(slug, token) {
+  if (!slug || !token) return;
+  shareAccessTokenRegistry.set(String(slug), String(token));
+}
+
+export function getShareAccessToken(slug) {
+  if (!slug) return null;
+  return shareAccessTokenRegistry.get(String(slug)) || null;
+}
+
+export function clearShareAccessToken(slug) {
+  if (slug) shareAccessTokenRegistry.delete(String(slug));
+  else shareAccessTokenRegistry.clear();
 }
 
 function resolvePassword(file, explicitPassword) {
@@ -108,6 +142,73 @@ export async function getSharedFileBySlug(slug) {
     throw new Error(response?.message || "获取文件详情失败");
   }
   return response.data;
+}
+
+/******************************************************************************
+ * 文件夹分享（公开只读）
+ ******************************************************************************/
+
+export async function getSharedFolderBySlug(slug) {
+  const response = await fileService.getPublicFolder(slug);
+  if (!response?.success) {
+    throw new Error(response?.message || "获取文件夹分享失败");
+  }
+  return response.data;
+}
+
+export async function verifySharedFolderPassword(slug, password) {
+  const response = await fileService.verifyFolderPassword(slug, password);
+  if (!response?.success) {
+    throw new Error(response?.message || "验证文件夹密码失败");
+  }
+  return response.data;
+}
+
+export async function getSharedFolderList(slug, options = {}) {
+  const response = await fileService.getPublicFolderList(slug, options);
+  if (!response?.success) {
+    throw new Error(response?.message || "获取目录失败");
+  }
+  return response.data;
+}
+
+/**
+ * 构建文件夹分享单文件下载 URL（后端代理入口）
+ * - path 为分享根目录相对路径；设置了密码的分享需携带 password
+ * @param {string} slug
+ * @param {string} path
+ * @param {string} [password]
+ * @returns {string}
+ */
+export function buildFolderDownloadUrl(slug, path, password) {
+  if (!slug || !path) return "";
+  const params = new URLSearchParams();
+  params.set("path", path);
+  // 优先使用访问令牌，避免明文密码进 URL
+  const token = getShareAccessToken(slug);
+  if (token) params.set("at", token);
+  else if (password) params.set("password", password);
+  return `${getFullApiUrl(`/share/folder/${encodeURIComponent(slug)}/download`)}?${params.toString()}`;
+}
+
+/**
+ * 构建文件夹分享单文件预览 URL（内联展示，不强制下载）
+ * - 供图片/音视频/PDF 等在页面内预览使用；文本类预览亦复用同一入口
+ * @param {string} slug
+ * @param {string} path
+ * @param {string} [password]
+ * @returns {string}
+ */
+export function buildFolderPreviewUrl(slug, path, password) {
+  if (!slug || !path) return "";
+  const params = new URLSearchParams();
+  params.set("path", path);
+  params.set("inline", "1");
+  // 优先使用访问令牌，避免明文密码进 URL
+  const token = getShareAccessToken(slug);
+  if (token) params.set("at", token);
+  else if (password) params.set("password", password);
+  return `${getFullApiUrl(`/share/folder/${encodeURIComponent(slug)}/download`)}?${params.toString()}`;
 }
 
 export function buildPreviewUrl(file, options = {}) {

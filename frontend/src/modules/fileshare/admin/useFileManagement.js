@@ -194,11 +194,23 @@ export function useFileManagement(userType = "admin", { confirmFn } = {}) {
   };
 
   /**
+   * 构建分享链接：文件夹分享走 /folder/:slug，其余走 /file/:slug
+   * @param {FileshareItem} file
+   * @returns {string}
+   */
+  const buildShareUrl = (file) => {
+    const origin = typeof window !== "undefined" ? window.location.origin : "";
+    return file && file.target_type === "folder"
+      ? fileshareService.buildFolderShareUrl(file, origin)
+      : fileshareService.buildShareUrl(file, origin);
+  };
+
+  /**
    * 生成QR码
    */
   const generateQRCode = async (file, darkMode = false) => {
     try {
-      const fileUrl = fileshareService.buildShareUrl(file, window.location.origin);
+      const fileUrl = buildShareUrl(file);
 
       qrCodeDataURL.value = await createQRCodeImage(fileUrl, { darkMode });
 
@@ -227,7 +239,7 @@ export function useFileManagement(userType = "admin", { confirmFn } = {}) {
     }
 
     try {
-      const fileUrl = fileshareService.buildShareUrl(file, window.location.origin);
+      const fileUrl = buildShareUrl(file);
 
       const ok = await copyToClipboard(fileUrl);
       if (ok) {

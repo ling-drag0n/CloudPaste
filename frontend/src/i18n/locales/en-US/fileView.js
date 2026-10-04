@@ -5,6 +5,62 @@ export default {
     error: "Load Failed",
     notFound: "File Not Found",
 
+    // Folder share (public read-only)
+    folder: {
+      title: "Folder Share",
+      loading: "Loading...",
+      errorState: "Unable to access share",
+      emptyFolder: "This folder is empty",
+      itemCount: "{count} item(s)",
+      back: "Back",
+      meta: {
+        remainingDownloads: "Remaining Downloads",
+        downloadsUsed: "{views} downloaded",
+        unlimitedDownloads: "Unlimited",
+        expiresAt: "Expires At",
+        noExpiry: "Never expires",
+      },
+      password: {
+        title: "Please enter access password",
+        description: "This folder is password protected, please enter the password to view the content",
+        label: "Password",
+        placeholder: "Enter password",
+        submit: "Confirm",
+        loading: "Verifying...",
+      },
+      table: {
+        name: "Name",
+        size: "Size",
+        modified: "Modified",
+        actions: "Actions",
+      },
+      actions: {
+        download: "Download",
+        preview: "Preview",
+        openFolder: "Open",
+        refresh: "Refresh",
+      },
+      viewMode: {
+        list: "List View",
+        grid: "Grid View",
+      },
+      preview: {
+        title: "File Preview",
+        loading: "Loading...",
+        error: "Preview load failed",
+        notSupported: "This file type does not support online preview, please download it",
+        download: "Download File",
+        close: "Close",
+      },
+      errors: {
+        expired: "This share has expired or reached its download limit",
+        notFound: "This share does not exist or has been deleted",
+        wrongPassword: "Incorrect password, please try again",
+        loadFailed: "Unable to load share information",
+        listFailed: "Failed to load directory",
+      },
+    },
+
     // File information
     fileInfo: {
       filename: "Filename",
@@ -16,7 +72,7 @@ export default {
       copyLink: "Copy Link",
       linkCopied: "Link copied to clipboard",
       copyFailed: "Copy failed",
-      accessCount: "Access Count",
+      accessCount: "Downloads",
       expiresAt: "Expires At",
       accessMode: "Access Mode",
       proxyAccess: "Local Proxy Access",
@@ -252,6 +308,7 @@ export default {
       notFound: "File not found",
       unknown: "Unknown error",
       missingSlug: "Missing file identifier",
+      missingId: "Missing file ID",
       loadFailed: "Unable to load file information",
       getDetailsFailed: "Failed to get details",
       getDetailsFailedMessage: "Failed to get file details, will use currently displayed information",

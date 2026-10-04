@@ -374,12 +374,25 @@ export async function batchCopyItems(items, options = {}) {
 }
 
 /**
- * 从文件系统创建分享链接
- * @param {string} path 文件路径
+ * 从文件系统创建分享链接（支持文件与文件夹）
+ * @param {string} path 目标 FS 路径（文件或文件夹）
+ * @param {Object} [options] 分享选项
+ * @param {string} [options.password] 访问密码，空表示无密码
+ * @param {number|string} [options.expires_in] 有效期（小时），0 表示永久
+ * @param {number|string} [options.max_views] 最大下载次数，0 表示不限
+ * @param {string} [options.remark] 备注
+ * @param {string} [options.slug] 自定义 slug
  * @returns {Promise<Object>} 创建结果响应对象
  */
-export async function createShareFromFileSystem(path) {
-  return post(`/fs/create-share`, { path });
+export async function createShareFromFileSystem(path, options = {}) {
+  const body = { path };
+  if (options.password) body.password = options.password;
+  if (options.expires_in !== undefined && options.expires_in !== null) body.expires_in = options.expires_in;
+  if (options.max_views !== undefined && options.max_views !== null) body.max_views = options.max_views;
+  if (options.remark) body.remark = options.remark;
+  if (options.slug) body.slug = options.slug;
+  if (options.encryption_meta) body.encryption_meta = options.encryption_meta;
+  return post(`/fs/create-share`, body);
 }
 
 /******************************************************************************

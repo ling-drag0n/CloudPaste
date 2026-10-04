@@ -5,7 +5,7 @@
       <div class="flex items-center space-x-2">
         <!-- 上传文件按钮 -->
         <button
-          v-if="!isVirtual"
+          v-if="!isVirtual && canUpload"
           @click="openUploadFileDialog"
           class="inline-flex items-center justify-center p-2 sm:px-4 sm:py-1.5 rounded-md sm:rounded-full transition-all duration-200 text-sm font-medium shadow-sm hover:shadow-md active:scale-95"
           :class="darkMode ? 'bg-gray-700 hover:bg-gray-600 text-white' : 'bg-white hover:bg-gray-50 text-gray-700 border border-gray-200'"
@@ -123,6 +123,10 @@ const props = defineProps({
   darkMode: {
     type: Boolean,
     default: false,
+  },
+  canUpload: {
+    type: Boolean,
+    default: true,
   },
   viewMode: {
     type: String,

@@ -47,6 +47,17 @@ router.put("/api/upload-direct/:filename", requireFilesCreate, async (c) => {
   const storageConfigId = c.req.query("storage_config_id") || null;
   const uploadId = c.req.query("upload_id") || null;
 
+  // E2E 加密元数据（可选，URL 编码的 JSON）
+  let encryptionMeta = null;
+  const encryptionMetaRaw = c.req.query("encryption_meta");
+  if (encryptionMetaRaw) {
+    try {
+      encryptionMeta = JSON.parse(encryptionMetaRaw);
+    } catch {
+      encryptionMeta = null;
+    }
+  }
+
   const shareParams = {
     storage_config_id: storageConfigId,
     path: c.req.query("path") || null,
@@ -60,6 +71,7 @@ router.put("/api/upload-direct/:filename", requireFilesCreate, async (c) => {
     originalFilename: getQueryBool(c, "original_filename", false),
     contentType: c.req.header("content-type") || undefined,
     request: c.req.raw,
+    encryptionMeta,
   };
 
   const shareService = new FileShareService(db, encryptionSecret, repositoryFactory);
@@ -183,6 +195,7 @@ router.put("/api/share/upload", requireFilesCreate, async (c) => {
     contentType: c.req.header("content-type") || undefined,
     request: c.req.raw,
     uploadId: uploadId || null,
+    encryptionMeta: options.encryption_meta || null,
   };
 
   const shareService = new FileShareService(db, encryptionSecret, repositoryFactory);
@@ -242,6 +255,15 @@ router.post("/api/share/upload", requireFilesCreate, parseFormData, async (c) =>
     contentType: file.type || undefined,
     request: c.req.raw,
     uploadId: uploadId || null,
+    encryptionMeta: (() => {
+      const raw = formData.get("encryption_meta");
+      if (!raw) return null;
+      try {
+        return JSON.parse(raw);
+      } catch {
+        return null;
+      }
+    })(),
   };
 
   const result = await shareService.uploadFileViaObjectStoreAndShare(
@@ -265,7 +287,7 @@ router.post("/api/share/presign", requireFilesCreate, async (c) => {
   const { type: userType, userId, apiKeyInfo } = principalInfo;
   const userIdOrInfo = userType === UserType.ADMIN ? userId : apiKeyInfo;
 
-  const { filename, fileSize, contentType, path, storage_config_id, sha256 } = body || {};
+  const { filename, fileSize, contentType, path, storage_config_id, sha256, e2e } = body || {};
   if (!filename) {
     throw new ValidationError("缺少 filename");
   }
@@ -279,6 +301,7 @@ router.post("/api/share/presign", requireFilesCreate, async (c) => {
     path: path || null,
     storage_config_id: storage_config_id || null,
     sha256: sha256 || null,
+    e2e: e2e === true,
     userIdOrInfo,
     userType,
   });
@@ -297,7 +320,7 @@ router.post("/api/share/commit", requireFilesCreate, async (c) => {
   const { type: userType, userId, apiKeyInfo } = principalInfo;
   const userIdOrInfo = userType === UserType.ADMIN ? userId : apiKeyInfo;
 
-  const { key, storage_config_id, filename, size, etag, sha256, slug, remark, password, expires_in, max_views, use_proxy, original_filename } =
+  const { key, storage_config_id, filename, size, etag, sha256, slug, remark, password, expires_in, max_views, use_proxy, original_filename, encryption_meta } =
     body || {};
   if (!filename) {
     throw new ValidationError("缺少 filename");
@@ -326,6 +349,7 @@ router.post("/api/share/commit", requireFilesCreate, async (c) => {
     maxViews: Number(max_views) || 0,
     useProxy: use_proxy !== undefined ? !!use_proxy : undefined,
     originalFilename: !!original_filename,
+    encryptionMeta: encryption_meta || null,
     userIdOrInfo,
     userType,
     request: c.req.raw,

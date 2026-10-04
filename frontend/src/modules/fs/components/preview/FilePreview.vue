@@ -495,7 +495,7 @@ const props = defineProps({
 });
 
 // Emit 事件定义
-const emit = defineEmits(["download", "loaded", "error", "updated", "switch-audio", "show-message"]);
+const emit = defineEmits(["download", "loaded", "error", "updated", "switch-audio", "show-message", "create-share"]);
 
 // 使用认证Store
 const authStore = useAuthStore();

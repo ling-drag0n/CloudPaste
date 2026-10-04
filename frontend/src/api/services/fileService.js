@@ -79,7 +79,7 @@ export async function completeFileUpload(data) {
  * @param {string} [options.remark] - 备注（可选）
  * @param {string} [options.password] - 密码（可选）
  * @param {number|string} [options.expires_in] - 过期时间（小时，可选）
- * @param {number|string} [options.max_views] - 最大访问次数（可选）
+ * @param {number|string} [options.max_views] - 最大下载次数（可选）
  * @param {boolean} [options.use_proxy] - 是否通过代理下载（可选）
  * @param {boolean} [options.original_filename] - 是否使用原始文件名（可选）
  * @returns {Promise<Object>} 后端统一响应对象 { success, message, data }
@@ -195,4 +195,40 @@ export async function getPublicFile(slug) {
  */
 export async function verifyFilePassword(slug, password) {
   return await post(`share/verify/${slug}`, { password });
+}
+
+/******************************************************************************
+ * 文件夹分享（公开只读）API
+ ******************************************************************************/
+
+/**
+ * 获取公开文件夹分享元信息
+ * @param {string} slug - 分享短链接
+ * @returns {Promise<Object>} 元信息响应（无密码时包含根目录 items）
+ */
+export async function getPublicFolder(slug) {
+  return await get(`share/folder/${slug}`);
+}
+
+/**
+ * 验证文件夹分享密码（成功后返回根目录 items）
+ * @param {string} slug - 分享短链接
+ * @param {string} password - 访问密码
+ * @returns {Promise<Object>} 验证响应
+ */
+export async function verifyFolderPassword(slug, password) {
+  return await post(`share/folder/verify/${slug}`, { password });
+}
+
+/**
+ * 获取文件夹分享某个子目录的列表
+ * @param {string} slug - 分享短链接
+ * @param {{path?:string, password?:string}} [options]
+ * @returns {Promise<Object>} 目录列表响应
+ */
+export async function getPublicFolderList(slug, options = {}) {
+  const params = {};
+  if (options.path) params.path = options.path;
+  if (options.password) params.password = options.password;
+  return await get(`share/folder/${slug}/list`, { params });
 }

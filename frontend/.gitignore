@@ -1,6 +1,7 @@
 # Dependencies
 node_modules
 dev-dist
+dist
 
 # Wrangler specific
 .wrangler/

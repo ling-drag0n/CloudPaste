@@ -5,8 +5,6 @@
 
 import { ref, onMounted, onUnmounted } from "vue";
 import { useI18n } from "vue-i18n";
-import { api } from "@/api";
-import { copyToClipboard } from "@/utils/clipboard";
 import { createLogger } from "@/utils/logger.js";
 
 export function useFilePreviewExtensions(
@@ -154,43 +152,13 @@ export function useFilePreviewExtensions(
   const isCreatingShare = ref(false);
 
   /**
-   * 处理创建分享链接
+   * 处理创建分享链接：打开分享创建弹窗（由父组件统一处理）
    */
-  const handleCreateShare = async () => {
+  const handleCreateShare = () => {
     if (!file.value || !file.value.path) {
       return;
     }
-
-    isCreatingShare.value = true;
-
-    try {
-      const result = await api.fs.createShareFromFileSystem(file.value.path);
-
-      if (result.success) {
-        // 复制分享链接到剪贴板
-        const shareUrl = `${window.location.origin}${result.data.url}`;
-        const success = await copyToClipboard(shareUrl);
-        if (!success) {
-          throw new Error("复制分享链接失败");
-        }
-
-        // 显示成功消息
-        emit("show-message", {
-          type: "success",
-          message: t("mount.messages.shareCreated", { url: shareUrl }),
-        });
-      } else {
-        throw new Error(result.message || "创建分享失败");
-      }
-    } catch (error) {
-      log.error("创建分享失败:", error);
-      emit("show-message", {
-        type: "error",
-        message: t("mount.messages.shareCreateFailed", { message: error.message }),
-      });
-    } finally {
-      isCreatingShare.value = false;
-    }
+    emit("create-share", file.value);
   };
 
   // ===== 生命周期管理 =====

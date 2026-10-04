@@ -50,9 +50,9 @@
             ></textarea>
           </div>
 
-          <!-- 最大查看次数 -->
+          <!-- 最大下载次数 -->
           <div class="mb-4">
-            <label class="block text-sm font-medium mb-1 text-gray-700 dark:text-gray-300"> 最大查看次数 </label>
+            <label class="block text-sm font-medium mb-1 text-gray-700 dark:text-gray-300"> 最大下载次数 </label>
             <input
               type="number"
               class="w-full px-3 py-2 border rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-white"

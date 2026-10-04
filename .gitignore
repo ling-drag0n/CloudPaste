@@ -108,3 +108,15 @@ out
 # Stores VSCode versions used for testing VSCode extensions
 .vscode-test
 .spec-workflow
+# Frontend build output
+dist
+
+# IDE
+.idea/
+.trae/
+
+# Local runtime data
+backend/data/
+
+# ZCode workspace
+.zcode/

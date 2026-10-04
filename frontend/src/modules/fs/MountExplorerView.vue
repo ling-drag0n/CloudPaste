@@ -71,6 +71,7 @@
             :current-path="currentPath"
             :is-virtual="isVirtualDirectory"
             :dark-mode="darkMode"
+            :can-upload="canUpload"
             :view-mode="viewMode"
             :selected-items="selectedItems"
             @create-folder="handleCreateFolder"
@@ -117,6 +118,17 @@
         :dark-mode="darkMode"
         @close="handleCloseTasksModal"
         @task-completed="handleTaskCompleted"
+      />
+
+      <!-- 生成分享链接弹窗 -->
+      <ShareCreateModal
+        v-if="hasEverOpenedShareModal"
+        v-model="isShareModalOpen"
+        :dark-mode="darkMode"
+        :target-path="shareTarget.path"
+        :target-name="shareTarget.name"
+        :is-directory="shareTarget.isDirectory"
+        @created="handleShareCreated"
       />
 
       <!-- 新建文件夹弹窗 -->
@@ -283,6 +295,7 @@
                   @rename="handleRename"
                   @delete="handleDelete"
                   @preview="handlePreview"
+                  @share="handleOpenShareModal"
                   @load-more="handleLoadMore"
                   @item-select="handleItemSelect"
                   @toggle-select-all="toggleSelectAll"
@@ -345,6 +358,7 @@
                 @loaded="handlePreviewLoaded"
                 @error="handlePreviewError"
                 @show-message="handleShowMessage"
+                @create-share="handleOpenShareModal"
               />
             </div>
           </div>
@@ -384,6 +398,7 @@
       :dark-mode="darkMode"
       @download="handleBatchDownload"
       @copy-link="handleBatchGetLink"
+      @share="handleBatchShare"
       @copy="handleBatchCopy"
       @add-to-basket="handleBatchAddToBasket"
       @rename="handleBatchRename"
@@ -396,6 +411,7 @@
       v-if="hasPermission"
       :dark-mode="darkMode"
       :can-write="!isVirtualDirectory"
+      :can-upload="canUpload"
       :show-checkboxes="explorerSettings.showCheckboxes"
       @refresh="handleRefresh"
       @new-folder="handleCreateFolder"
@@ -442,6 +458,7 @@ const FilePreview = defineAsyncComponent(() => import("@/modules/fs/components/p
 const UppyUploadModal = defineAsyncComponent(() => import("@/modules/fs/components/shared/modals/UppyUploadModal.vue"));
 const CopyModal = defineAsyncComponent(() => import("@/modules/fs/components/shared/modals/CopyModal.vue"));
 const TaskListModal = defineAsyncComponent(() => import("@/modules/fs/components/shared/modals/TaskListModal.vue"));
+const ShareCreateModal = defineAsyncComponent(() => import("@/modules/fs/components/shared/modals/ShareCreateModal.vue"));
 const SearchModal = defineAsyncComponent(() => import("@/modules/fs/components/shared/modals/SearchModal.vue"));
 import PathPasswordDialog from "@/modules/fs/components/shared/modals/PathPasswordDialog.vue";
 import ConfirmDialog from "@/components/common/dialogs/ConfirmDialog.vue";
@@ -516,12 +533,16 @@ const {
   loadMoreCurrentDirectory,
 } = useMountExplorerController();
 
+// 上传能力：仅取决于当前目录是否可写（虚拟目录只读），与独立上传页开关无关
+const canUpload = computed(() => !isVirtualDirectory.value);
+
 const { y: windowScrollY } = useWindowScroll();
 
 // ===== 仅“第一次打开”时才加载重弹窗组件 =====
 const hasEverOpenedUploadModal = ref(false);
 const hasEverOpenedCopyModal = ref(false);
 const hasEverOpenedTasksModal = ref(false);
+const hasEverOpenedShareModal = ref(false);
 const hasEverOpenedSearchModal = ref(false);
 const hasEverOpenedSettingsDrawer = ref(false);
 const hasEverOpenedLightbox = ref(false);
@@ -630,6 +651,10 @@ const isCreatingFolder = ref(false);
 // 设置抽屉状态
 const isSettingsDrawerOpen = ref(false);
 
+// 生成分享链接弹窗状态
+const isShareModalOpen = ref(false);
+const shareTarget = ref({ path: "", name: "", isDirectory: false });
+
 // ===== 仅“第一次打开”时才加载重弹窗组件（watch 需要在依赖变量定义之后注册） =====
 watch(
   () => isUploadModalOpen.value,
@@ -662,6 +687,12 @@ watch(
   }
 );
 watch(
+  () => isShareModalOpen.value,
+  (open) => {
+    if (open) hasEverOpenedShareModal.value = true;
+  }
+);
+watch(
   () => fsLightbox.isOpen.value,
   (open) => {
     if (open) hasEverOpenedLightbox.value = true;
@@ -688,6 +719,7 @@ const initContextMenu = () => {
   contextMenu = useContextMenu({
     onDownload: handleDownload,
     onGetLink: handleGetLink,
+    onShare: handleOpenShareModal,
     onRename: (item) => {
       // 直接触发重命名，设置待重命名的项目
       contextMenuRenameItem.value = item;
@@ -791,6 +823,33 @@ const handleBatchGetLink = async () => {
   if (selectedFiles.length === 1 && !selectedFiles[0].isDirectory) {
     await handleGetLink(selectedFiles[0]);
   }
+};
+
+// 打开生成分享链接弹窗（文件与文件夹均支持）
+const handleOpenShareModal = (item) => {
+  if (!item || !item.path) {
+    showMessage("warning", t("mount.messages.noItemsSelected"));
+    return;
+  }
+  shareTarget.value = {
+    path: item.path,
+    name: item.name || "",
+    isDirectory: !!item.isDirectory,
+  };
+  isShareModalOpen.value = true;
+};
+
+// 悬浮操作栏：生成分享链接（单选）
+const handleBatchShare = () => {
+  const selectedFiles = getSelectedItems();
+  if (selectedFiles.length !== 1) return;
+  handleOpenShareModal(selectedFiles[0]);
+};
+
+// 分享创建成功
+const handleShareCreated = (result) => {
+  const url = result?.url ? `${window.location.origin}${result.url}` : "";
+  showMessage("success", url ? t("mount.shareCreate.createdWithUrl", { url }) : t("mount.shareCreate.created"));
 };
 
 const handleBatchRename = () => {

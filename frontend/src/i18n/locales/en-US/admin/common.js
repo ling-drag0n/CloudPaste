@@ -41,6 +41,7 @@ export default {
     dashboard: "Dashboard",
     textManagement: "Text Management",
     fileManagement: "File Management",
+    shareManagement: "Share Link Management",
     storageConfig: "Storage Management",
     mountManagement: "Mount Management",
     fsMetaManagement: "Meta Management",

@@ -167,6 +167,12 @@ const loadFileInfo = async (force = false) => {
     // force=true 时跳过缓存，确保拿到最新数据
     const data = await fileShareStore.fetchBySlug(fileSlug, { useCache: !force });
 
+    // 文件夹分享：重定向到公开只读的文件夹分享页
+    if (data && data.target_type === "folder") {
+      await router.replace({ name: "FolderShareView", params: { slug: fileSlug } });
+      return;
+    }
+
     fileInfo.value = {
       ...data,
       slug: fileSlug,

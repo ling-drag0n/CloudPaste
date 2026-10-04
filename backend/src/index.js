@@ -24,6 +24,7 @@ import { securityContext } from "./security/middleware/securityContext.js";
 import { withRepositories } from "./utils/repositories.js";
 import { errorBoundary } from "./http/middlewares/errorBoundary.js";
 import { normalizeError, sanitizeErrorMessageForClient } from "./http/errors.js";
+import { isForceHttpsEnabled } from "./utils/securitySettings.js";
 
 const getTimeSource = () => {
   if (typeof performance !== "undefined" && typeof performance.now === "function") {
@@ -161,6 +162,36 @@ app.use("*", async (c, next) => {
 app.use("*", errorBoundary());
 app.use("*", withRepositories());
 app.use("*", securityContext());
+
+// 强制 HTTPS（系统设置 force_https，默认关闭）：
+// - 命中 x-forwarded-proto=http 或明文 http 请求时 308 跳转 https（保留方法与请求体）
+// - 附加 HSTS 响应头；Workers 部署平台默认已有 TLS，此开关主要面向 Docker/自建部署
+app.use("*", async (c, next) => {
+  try {
+    const db = c.env?.DB;
+    if (db && (await isForceHttpsEnabled(db))) {
+      const requestUrl = new URL(c.req.url);
+      const forwardedProto = (c.req.header("x-forwarded-proto") || "").split(",")[0].trim().toLowerCase();
+      const effectiveProto = forwardedProto || requestUrl.protocol.replace(":", "");
+      if (effectiveProto === "http") {
+        const target = new URL(c.req.url);
+        target.protocol = "https:";
+        return new Response(null, {
+          status: 308,
+          headers: {
+            Location: target.toString(),
+            "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+          },
+        });
+      }
+      // 已是 https：也附加 HSTS（仅在开关开启时）
+      c.header("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+    }
+  } catch (e) {
+    console.warn("force_https 中间件执行失败（已忽略）:", e?.message || e);
+  }
+  await next();
+});
 
 // 根路径WebDAV OPTIONS兼容性处理器
 // 为1Panel等客户端提供WebDAV能力发现支持

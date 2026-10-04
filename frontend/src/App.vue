@@ -38,7 +38,6 @@ const activePage = computed(() => {
 // 前台入口开关（站点设置）
 // - store 未初始化前，先按“都显示”处理，避免把用户锁死在空白页面
 const canShowHomeEntry = computed(() => !siteConfigStore.isInitialized || siteConfigStore.siteHomeEditorEnabled);
-const canShowUploadEntry = computed(() => !siteConfigStore.isInitialized || siteConfigStore.siteUploadPageEnabled);
 const canShowMountEntry = computed(() => !siteConfigStore.isInitialized || siteConfigStore.siteMountExplorerEnabled);
 
 // 公告入口（全站）：只有“启用 + 有内容”才显示
@@ -158,17 +157,6 @@ const isDev = import.meta.env.DEV;
                 ]"
               >
                 {{ $t("nav.home") }}
-              </router-link>
-              <router-link
-                to="/upload"
-                v-if="canShowUploadEntry"
-                :class="[
-                  activePage === 'upload' ? 'border-primary-500 text-current' : 'border-transparent hover:border-gray-300',
-                  'inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium transition-colors duration-200',
-                  activePage !== 'upload' && isDarkMode ? 'text-gray-300 hover:text-gray-100' : activePage !== 'upload' ? 'text-gray-500 hover:text-gray-700' : '',
-                ]"
-              >
-                {{ $t("nav.upload") }}
               </router-link>
               <router-link
                 to="/mount-explorer"
@@ -341,23 +329,6 @@ const isDev = import.meta.env.DEV;
             ]"
           >
             <span class="ml-2">{{ $t("nav.home") }}</span>
-          </router-link>
-          <router-link
-            to="/upload"
-            @click="isMobileMenuOpen = false"
-            v-if="canShowUploadEntry"
-            :class="[
-              'flex items-center px-4 py-3 transition-colors duration-200',
-              activePage === 'upload'
-                ? isDarkMode
-                  ? 'bg-gray-700 text-white'
-                  : 'bg-gray-100 text-gray-900'
-                : isDarkMode
-                ? 'text-gray-300 hover:bg-gray-700 hover:text-white'
-                : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900',
-            ]"
-          >
-            <span class="ml-2">{{ $t("nav.upload") }}</span>
           </router-link>
           <router-link
             to="/mount-explorer"

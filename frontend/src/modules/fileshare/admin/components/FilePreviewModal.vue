@@ -42,15 +42,15 @@
             </div>
           </div>
 
-          <!-- 访问统计 -->
+          <!-- 下载统计 -->
           <div>
-            <h4 class="text-sm font-medium mb-2" :class="darkMode ? 'text-gray-300' : 'text-gray-700'">访问统计</h4>
+            <h4 class="text-sm font-medium mb-2" :class="darkMode ? 'text-gray-300' : 'text-gray-700'">下载统计</h4>
             <div class="bg-gray-50 dark:bg-gray-900 rounded p-3">
               <dl class="grid grid-cols-3 gap-x-4 gap-y-2 text-sm">
-                <dt :class="darkMode ? 'text-gray-400' : 'text-gray-500'">访问次数</dt>
+                <dt :class="darkMode ? 'text-gray-400' : 'text-gray-500'">下载次数</dt>
                 <dd class="col-span-2" :class="darkMode ? 'text-white' : 'text-gray-900'">{{ file.views || 0 }} 次</dd>
 
-                <dt :class="darkMode ? 'text-gray-400' : 'text-gray-500'">剩余次数</dt>
+                <dt :class="darkMode ? 'text-gray-400' : 'text-gray-500'">剩余下载次数</dt>
                 <dd class="col-span-2" :class="remainingViewsClass">
                   {{ getRemainingViews }}
                 </dd>

@@ -27,6 +27,14 @@ export default {
       expiresHint: "Set proxy signature expiration time, 0 means never expires",
       expiresUnit: "seconds",
     },
+    securitySettings: {
+      title: "Security Settings",
+      description: "File transfer encryption and HTTPS enforcement",
+      fileEncryptionLabel: "Server-side file transfer encryption",
+      fileEncryptionHint: "When enabled, newly uploaded shared files are encrypted with AES-256-GCM at rest and decrypted transparently on download. Encrypted files are always served via proxy; presigned direct upload and resumable upload will fall back automatically",
+      forceHttpsLabel: "Force HTTPS",
+      forceHttpsHint: "When enabled, HTTP requests are redirected (308) to HTTPS with HSTS. Recommended for Docker/self-hosted deployments",
+    },
     buttons: {
       updateSettings: "Update Settings",
       updating: "Updating...",

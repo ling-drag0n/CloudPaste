@@ -128,6 +128,7 @@
             @delete="handleDelete"
             @select="handleItemSelect"
             @getLink="handleGetLink"
+            @share="handleShare"
             @show-message="handleShowMessage"
             @contextmenu="handleContextMenu"
           />
@@ -154,6 +155,7 @@
             @delete="handleDelete"
             @select="handleItemSelect"
             @getLink="handleGetLink"
+            @share="handleShare"
             @show-message="handleShowMessage"
             @contextmenu="handleContextMenu"
           />
@@ -396,7 +398,7 @@ const props = defineProps({
   },
 });
 
-const emit = defineEmits(["navigate", "download", "getLink", "rename", "delete", "preview", "item-select", "toggle-select-all", "show-message", "contextmenu", "load-more"]);
+const emit = defineEmits(["navigate", "download", "getLink", "share", "rename", "delete", "preview", "item-select", "toggle-select-all", "show-message", "contextmenu", "load-more"]);
 
 const sortedItems = createSortedItems(computed(() => props.items));
 
@@ -711,6 +713,11 @@ const handleGetLink = async (item) => {
 // 处理消息显示
 const handleShowMessage = (messageInfo) => {
   emit("show-message", messageInfo);
+};
+
+// 处理生成分享链接（文件与文件夹均支持）
+const handleShare = (item) => {
+  emit("share", item);
 };
 
 // 处理右键菜单事件

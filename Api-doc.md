@@ -1851,6 +1851,30 @@ X-Custom-Auth-Key: <api_key>
 
 ---
 
+## 14. 文件传输加密
+
+CloudPaste 提供两种文件内容加密模式（详见 README 安全小节）：
+
+### 14.1 服务端透明加密（全局开关）
+
+管理员在「管理后台 → 全局设置 → 安全设置」开启 `file_transfer_encryption` 后：
+
+- 新上传的分享文件（`/api/upload-direct`、`/api/share/upload`、URL 上传）由后端以 AES-256-GCM（CPENC1 分块格式）加密后落存储，下载时在代理层流式解密
+- 加密文件强制走本地代理访问，302 存储直链不再下发
+- 预签名直传接口在开关开启时返回错误码 `ENCRYPTION_REQUIRES_PROXY`，客户端应回退到 `/api/share/upload` 代理上传（前端已自动处理）
+- 加密上传暂不支持断点续传
+
+### 14.2 端到端加密（分享创建时勾选）
+
+- 浏览器内加密后才上传，服务器与存储全程只见密文；密钥仅存在于分享链接 fragment（`#e2ek=<base64url>`），不会发送到服务器
+- 分享创建接口（`/api/fs/create-share`、`/api/share/commit` 等）新增可选字段 `encryption_meta`（JSON，含 `mode:"e2e"`、`algo:"A256GCM"`、`chunkSize`、`noncePrefix`、`plainSize`、`cipherSize`，不含任何密钥材料）
+- 分享详情 JSON 新增只读字段：`encryption_mode`（`"server" | "e2e" | null`）与 `encryption_meta`（仅 e2e 模式返回分块参数）
+- 查看端：前端从 `location.hash` 读取密钥（仅内存），取回密文后在浏览器内解密；无密钥 fragment 的链接无法获得明文
+
+### 14.3 分享访问令牌（?at=）
+
+密码验证接口（`/api/share/verify/:slug`、`/api/share/folder/verify/:slug`）成功后返回 `accessToken`（短时效 HMAC 令牌）。后续下载/列表 URL 建议携带 `?at=<token>`，避免明文密码出现在 URL 中进入日志。旧 `?password=` 参数保持兼容。
+
 ## 附录
 
 ### 错误处理
