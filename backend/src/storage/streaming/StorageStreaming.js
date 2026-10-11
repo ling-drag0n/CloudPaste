@@ -487,7 +487,8 @@ export class StorageStreaming {
         return new Response(null, { status, headers });
       }
 
-      const handle = await reader.getBody();
+      // 把传入请求的 signal 一路带到驱动层：客户端断开时由运行时原生取消上游请求
+      const handle = await reader.getBody({ signal: options?.request?.signal });
       if (!handle) {
         return new Response(null, { status, headers });
       }
@@ -513,10 +514,12 @@ export class StorageStreaming {
         }
       }
 
-      // 对于 WebReadableStream（有 getReader 方法），直接作为 Response body 交给运行时处理
+      // 直接把原生流交给运行时，不要再包一层 JS ReadableStream。
+      // 在 Workers 运行时下，被 JS 包装过的流不会按背压消费，大文件响应会被截断；
+      // 这是运行时差异 —— 同样的写法在 Node 下内存为常数。
+      // 客户端断开时的取消语义，改由 request.signal 传到驱动层实现。
       if (stream && typeof stream.getReader === "function") {
-        const body = wrapWebReadableStreamWithClose(stream, handle?.close);
-        return new Response(body, { status, headers });
+        return new Response(stream, { status, headers });
       }
 
       // 对于 Node Readable（本地存储等场景），必须转换为 Web ReadableStream 并保持“边读边回”。
@@ -657,9 +660,9 @@ export class StorageStreaming {
     return {
       status: 200,
       headers,
-      async getBody() {
+      async getBody(options = {}) {
         if (closed) return null;
-        streamHandle = await descriptor.getStream();
+        streamHandle = await descriptor.getStream({ signal: options?.signal });
         return streamHandle;
       },
       async close() {
@@ -695,12 +698,12 @@ export class StorageStreaming {
     return {
       status: 206,
       headers,
-      async getBody() {
+      async getBody(options = {}) {
         if (closed) return null;
 
         // 优先使用驱动原生 Range 支持
         if (typeof descriptor.getRange === "function") {
-          streamHandle = await descriptor.getRange(range);
+          streamHandle = await descriptor.getRange(range, { signal: options?.signal });
 
           // 关键检测：驱动是否真正支持 Range 请求
           // 部分 WebDAV 服务器会忽略 Range 头，返回完整内容
@@ -772,7 +775,7 @@ export class StorageStreaming {
         const fallbackPolicy = descriptor?.rangeFallbackPolicy || "software";
         if (fallbackPolicy === "full") {
           console.log(`[StorageStreaming] 驱动不支持 getRange 方法，降级为 200 全量响应（忽略 Range）: ${start}-${end}`);
-          streamHandle = await descriptor.getStream();
+          streamHandle = await descriptor.getStream({ signal: options?.signal });
           const fallbackHeaders = buildResponseHeaders(descriptor, null, channel);
           return {
             stream: streamHandle.stream,
@@ -790,7 +793,7 @@ export class StorageStreaming {
           console.warn(`[StorageStreaming] 警告：该切片需要先读取并丢弃前 ${start} 字节（约 ${mb}MB），大跳转会很费流量且很慢`);
         }
 
-        streamHandle = await descriptor.getStream();
+        streamHandle = await descriptor.getStream({ signal: options?.signal });
         const originalStream = streamHandle.stream;
         const originalClose = streamHandle.close;
         const slicedStream = smartWrapStreamWithByteSlice(originalStream, start, end);
