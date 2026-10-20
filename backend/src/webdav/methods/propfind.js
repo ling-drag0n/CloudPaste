@@ -703,34 +703,23 @@ async function handleVirtualDirectoryPropfind(mounts, path, basicPath, requestIn
  */
 async function handleStoragePropfind(fileSystem, path, requestInfo, userIdOrInfo, actualUserType) {
   try {
-    let result;
+    if (requestInfo.depth !== "0" && requestInfo.depth !== "1") {
+      return createErrorResponse(WEBDAV_BASE_PATH + path, 403, "Depth infinity is not supported for performance reasons");
+    }
 
-    if (requestInfo.depth === "0") {
-      // 只获取当前资源信息
-      try {
-        const fileInfo = await fileSystem.getFileInfo(path, userIdOrInfo, actualUserType);
-        result = {
-          path: path,
-          isDirectory: fileInfo.isDirectory,
-          name: fileInfo.name,
-          size: fileInfo.size,
-          modified: fileInfo.modified,
-          created: fileInfo.created,
-          items: [], // depth=0时不包含子项
-        };
-      } catch (error) {
-        throw error;
-      }
-    } else if (requestInfo.depth === "1") {
-      // 获取当前资源和直接子项
-      try {
-        result = await fileSystem.listDirectory(path, userIdOrInfo, actualUserType);
-      } catch (error) {
-        throw error;
-      }
-    } else {
-      // infinity深度 - 大多数服务器会拒绝此请求
-      return createErrorResponse("/dav" + path, 403, "Depth infinity is not supported for performance reasons");
+    // 先確認資源存在及其類型，再決定是否列出子項
+    const fileInfo = await fileSystem.getFileInfo(path, userIdOrInfo, actualUserType);
+    const isDirectory = fileInfo.isDirectory === true || fileInfo.type === "directory";
+    const result = {
+      ...fileInfo,
+      path,
+      isDirectory,
+      items: [],
+    };
+
+    if (requestInfo.depth === "1" && isDirectory) {
+      const listing = await fileSystem.listDirectory(path, userIdOrInfo, actualUserType);
+      result.items = listing.items || [];
     }
 
     const responses = [];
