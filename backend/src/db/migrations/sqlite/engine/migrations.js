@@ -12,6 +12,7 @@ import {
   createUploadSessionsTables,
   createVfsTables,
   createMetricsCacheTables,
+  createPasteTagTables,
 } from "./schema.js";
 import {
   addCustomContentSettings,
@@ -20,6 +21,7 @@ import {
   resetPreviewProvidersDefaults,
   addSiteSettings,
   createDefaultGuestApiKey,
+  initializeDefaultPasteTags,
 } from "./seed.js";
 
 /**
@@ -828,6 +830,13 @@ export async function runLegacyMigrationByVersion(db, version) {
 
       break;
     }
+
+    case 35:
+      console.log("版本35：初始化文本标签功能...");
+      await createPasteTagTables(db);
+      await initializeDefaultPasteTags(db);
+      console.log("版本35：文本标签功能初始化完成。");
+      break;
 
     default:
       console.log(`未知的迁移版本: ${version}`);

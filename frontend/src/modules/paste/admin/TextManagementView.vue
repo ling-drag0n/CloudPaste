@@ -3,7 +3,6 @@ import { onMounted } from "vue";
 import { useI18n } from "vue-i18n";
 import { usePasteManagement } from "@/modules/paste";
 import { useThemeMode } from "@/composables/core/useThemeMode.js";
-import { useCreatorBadge } from "@/composables/admin-management/useCreatorBadge.js";
 import { useConfirmDialog, createConfirmFn } from "@/composables/core/useConfirmDialog.js";
 import { IconClock, IconDelete, IconRefresh } from "@/components/icons";
 
@@ -18,6 +17,9 @@ import QRCodeModal from "@/modules/fileshare/admin/components/QRCodeModal.vue";
 import GlobalSearchBox from "@/components/common/GlobalSearchBox.vue";
 import ConfirmDialog from "@/components/common/dialogs/ConfirmDialog.vue";
 import ViewModeToggle from "@/components/common/ViewModeToggle.vue";
+import PasteTagFilterBar from "@/modules/paste/admin/components/PasteTagFilterBar.vue";
+import PasteTagManagerModal from "@/modules/paste/admin/components/PasteTagManagerModal.vue";
+import PasteBatchTagModal from "@/modules/paste/admin/components/PasteBatchTagModal.vue";
 
 /**
  * 使用主题模式 composable
@@ -26,9 +28,6 @@ const { isDarkMode: darkMode } = useThemeMode();
 
 // 国际化
 const { t } = useI18n();
-
-// 创建者徽章统一逻辑
-const { formatCreator } = useCreatorBadge();
 
 // 确认对话框
 const { dialogState, confirm, handleConfirm, handleCancel } = useConfirmDialog();
@@ -44,7 +43,6 @@ const confirmFn = createConfirmFn(confirm, {
 const {
   // 状态
   loading,
-  error,
   selectedItems: selectedPastes,
   lastRefreshTime,
   pagination,
@@ -59,20 +57,24 @@ const {
   qrCodeSlug,
   copiedTexts,
   copiedRawTexts,
+  tags,
+  tagsLoading,
+  selectedTagIds,
+  showUntagged,
+  showTagManager,
+  showBatchTagModal,
+  batchTagMode,
 
   // 视图模式
   viewMode,
-  switchViewMode,
 
   // 权限状态
   isAdmin,
-  isApiKeyUser,
-  isAuthorized,
 
   // 方法
   loadPastes,
+  loadTags,
   refreshPastes,
-  handleOffsetChange,
   searchQuery,
   isSearchMode,
   searchLoading,
@@ -96,11 +98,17 @@ const {
   toggleSelectItem,
   toggleSelectAll,
   toggleVisibility,
-  clearSelection,
+  toggleTagFilter,
+  toggleUntaggedFilter,
+  clearTagFilters,
+  openBatchTags,
+  applyBatchTags,
+  createTag,
+  updateTag,
+  deleteTag,
+  reorderTags,
 } = usePasteManagement({ confirmFn });
 
-// 别名映射，用于模板中的方法调用
-const goToPage = handleOffsetChange;
 const deleteSelectedPastes = batchDeletePastes;
 
 // 视图模式选项配置
@@ -111,8 +119,7 @@ const viewModeOptions = [
 
 // 组件挂载时加载数据
 onMounted(() => {
-  // 加载分享列表
-  loadPastes();
+  Promise.all([loadPastes(), loadTags()]);
 });
 </script>
 
@@ -169,8 +176,23 @@ onMounted(() => {
         />
       </div>
 
+      <PasteTagFilterBar
+        :tags="tags"
+        :selected-tag-ids="selectedTagIds"
+        :untagged="showUntagged"
+        :selected-count="selectedPastes.length"
+        :can-manage="isAdmin"
+        :loading="tagsLoading"
+        @clear="clearTagFilters"
+        @toggle-tag="toggleTagFilter"
+        @toggle-untagged="toggleUntaggedFilter"
+        @batch-add="openBatchTags('add')"
+        @batch-remove="openBatchTags('remove')"
+        @manage="showTagManager = true"
+      />
+
       <!-- 其他操作按钮行 -->
-      <div class="flex flex-wrap gap-1 sm:gap-2">
+      <div class="flex flex-wrap items-center gap-1 sm:gap-2">
         <!-- 清理过期按钮 -->
         <button
           class="inline-flex items-center px-2 py-1 sm:px-3 sm:py-1.5 md:px-4 md:py-2 border border-transparent text-xs sm:text-sm font-medium rounded-md shadow-sm text-white bg-amber-600 hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-500 flex-grow sm:flex-grow-0"
@@ -325,7 +347,28 @@ onMounted(() => {
     />
 
     <!-- 修改弹窗组件 -->
-    <PasteEditModal :dark-mode="darkMode" :show-edit="showEdit" :paste="editingPaste" @close="closeEditModal" @save="submitEdit" />
+    <PasteEditModal :dark-mode="darkMode" :show-edit="showEdit" :paste="editingPaste" :available-tags="tags" @close="closeEditModal" @save="submitEdit" />
+
+    <PasteTagManagerModal
+      :show="showTagManager"
+      :tags="tags"
+      :loading="tagsLoading || loading"
+      @close="showTagManager = false"
+      @create="createTag"
+      @update="updateTag"
+      @delete="deleteTag"
+      @reorder="reorderTags"
+    />
+
+    <PasteBatchTagModal
+      :show="showBatchTagModal"
+      :mode="batchTagMode"
+      :tags="tags"
+      :selected-count="selectedPastes.length"
+      :loading="loading"
+      @close="showBatchTagModal = false"
+      @apply="applyBatchTags"
+    />
 
     <!-- 二维码弹窗组件 -->
     <QRCodeModal v-if="showQRCodeModal" :qr-code-url="qrCodeDataURL" :file-slug="qrCodeSlug" :dark-mode="darkMode" @close="showQRCodeModal = false" />

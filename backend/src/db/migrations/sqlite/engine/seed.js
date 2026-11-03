@@ -1,6 +1,63 @@
 import crypto from "crypto";
 import { DbTables } from "../../../../constants/index.js";
 
+export const DEFAULT_PASTE_TAGS = [
+  { id: "preset-tag-red", name: "红色", color: "#EF4444" },
+  { id: "preset-tag-yellow", name: "黄色", color: "#FACC15" },
+  { id: "preset-tag-green", name: "绿色", color: "#22C55E" },
+  { id: "preset-tag-important", name: "重要", color: "#A855F7", legacyColors: ["#9CA3AF", "#6B7280"] },
+  { id: "preset-tag-personal", name: "个人", color: "#3B82F6", legacyColors: ["#FFFFFF"] },
+];
+
+export async function initializeDefaultPasteTags(db) {
+  console.log("初始化默认文本标签...");
+
+  const presetIds = DEFAULT_PASTE_TAGS.map((tag) => tag.id);
+  const placeholders = presetIds.map(() => "?").join(", ");
+  const maxCustomOrder = await db
+    .prepare(
+      `SELECT COALESCE(MAX(sort_order), -1) AS max_order
+       FROM ${DbTables.PASTE_TAGS}
+       WHERE id NOT IN (${placeholders})`,
+    )
+    .bind(...presetIds)
+    .first();
+  const startOrder = Number(maxCustomOrder?.max_order ?? -1) + 1;
+
+  for (const [index, tag] of DEFAULT_PASTE_TAGS.entries()) {
+    const sortOrder = startOrder + index;
+
+    await db
+      .prepare(
+        `INSERT OR IGNORE INTO ${DbTables.PASTE_TAGS} (id, name, color, sort_order, created_by)
+         VALUES (?, ?, ?, ?, NULL)`,
+      )
+      .bind(tag.id, tag.name, tag.color, sortOrder)
+      .run();
+
+    await db
+      .prepare(
+        `UPDATE ${DbTables.PASTE_TAGS}
+         SET sort_order = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND sort_order != ?`,
+      )
+      .bind(sortOrder, tag.id, sortOrder)
+      .run();
+
+    if (tag.legacyColors?.length) {
+      const legacyPlaceholders = tag.legacyColors.map(() => "?").join(", ");
+      await db
+        .prepare(
+          `UPDATE ${DbTables.PASTE_TAGS}
+           SET color = ?, updated_at = CURRENT_TIMESTAMP
+           WHERE id = ? AND color IN (${legacyPlaceholders})`,
+        )
+        .bind(tag.color, tag.id, ...tag.legacyColors)
+        .run();
+    }
+  }
+}
+
 /**
  * SQLite/D1 系统设置与默认数据（engine）
  *
@@ -535,6 +592,7 @@ export default {
   addCustomContentSettings,
   addFileNamingStrategySetting,
   addDefaultProxySetting,
+  initializeDefaultPasteTags,
   createDefaultAdmin,
   createDefaultGuestApiKey,
 };

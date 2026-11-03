@@ -15,7 +15,7 @@ export class BackupService {
 
     // 模块与数据表的映射关系
     this.moduleTableMapping = {
-      text_management: ["pastes", "paste_passwords"],
+      text_management: ["pastes", "paste_passwords", "paste_tags", "paste_tag_assignments"],
       file_management: ["files", "file_passwords"],
       vfs_management: ["vfs_nodes"],
       mount_management: ["storage_mounts"],
@@ -32,6 +32,7 @@ export class BackupService {
     // 基于实际的外键约束关系和应用层依赖关系
     this.tableDependencies = {
       paste_passwords: ["pastes"],
+      paste_tag_assignments: ["pastes", "paste_tags"],
       file_passwords: ["files"],
       admin_tokens: ["admins"],
       storage_configs: ["admins"], // storage_configs.admin_id -> admins.id
@@ -868,6 +869,15 @@ export class BackupService {
         created_by: currentAdminId,
       }));
       console.log(`[BackupService] 映射 pastes 表：${originalCount} 条记录的 created_by 已更新`);
+    }
+
+    if (mappedData.paste_tags) {
+      const originalCount = mappedData.paste_tags.length;
+      mappedData.paste_tags = mappedData.paste_tags.map((record) => ({
+        ...record,
+        created_by: currentAdminId,
+      }));
+      console.log(`[BackupService] 映射 paste_tags 表：${originalCount} 条记录的 created_by 已更新`);
     }
 
     // 注意：不处理 api_keys 表，因为API密钥是独立的用户身份

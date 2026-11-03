@@ -2,6 +2,7 @@
 import { computed } from "vue";
 // 预览弹窗
 import { IconClose, IconCopy, IconEye, IconEyeOff, IconGlobeAlt, IconLockClosed } from "@/components/icons";
+import PasteTagPills from "./PasteTagPills.vue";
 
 // 组件接收的属性定义
 const props = defineProps({
@@ -254,6 +255,13 @@ const viewPaste = (slug) => {
                     {{ paste ? getRemainingViewsLabel(paste) : "-" }}
                   </span>
                 </div>
+              </div>
+
+              <!-- 文本标签 -->
+              <div class="col-span-1 sm:col-span-2">
+                <p class="mb-1.5 text-xs text-gray-500 dark:text-gray-400 sm:text-sm">标签:</p>
+                <PasteTagPills v-if="paste?.tags?.length" :tags="paste.tags" :max="8" />
+                <p v-else class="text-sm font-medium text-gray-500 dark:text-gray-400">无</p>
               </div>
 
               <!-- 备注信息 - 如果存在则跨两列显示 -->

@@ -51,6 +51,10 @@
       :has-permission="hasPermission"
       :is-submitting="isSubmitting"
       :saving-status="savingStatus"
+      :show-tags="canManageTags"
+      :available-tags="availableTags"
+      :tags-loading="tagsLoading"
+      :tags-error="tagsError"
       @submit="saveContent"
       @form-change="handleFormChange"
     />
@@ -94,7 +98,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, nextTick } from "vue";
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from "vue";
 import { useDebounceFn, useEventListener, useLocalStorage, useTimeoutFn } from "@vueuse/core";
 import { useI18n } from "vue-i18n";
 import { useAuthStore } from "@/stores/authStore";
@@ -162,6 +166,34 @@ const currentEditor = ref(null);
 
 // 从Store获取权限状态的计算属性（文本分享创建权限）
 const hasPermission = computed(() => authStore.hasTextSharePermission);
+const canManageTags = computed(
+  () => authStore.isAdmin || (authStore.authType === "apikey" && !authStore.isGuest && authStore.hasTextManagePermission)
+);
+const availableTags = ref([]);
+const tagsLoading = ref(false);
+const tagsError = ref("");
+
+const loadTags = async () => {
+  if (!canManageTags.value) {
+    availableTags.value = [];
+    tagsError.value = "";
+    return;
+  }
+
+  tagsLoading.value = true;
+  tagsError.value = "";
+  try {
+    const result = await pasteService.getTags();
+    availableTags.value = result.tags;
+  } catch (error) {
+    log.error("加载标签失败:", error);
+    tagsError.value = error?.message || t("markdown.form.tagsLoadFailed");
+  } finally {
+    tagsLoading.value = false;
+  }
+};
+
+watch(canManageTags, loadTags, { immediate: true });
 
 // 二维码弹窗状态
 const showQRCodeModal = ref(false);
@@ -375,6 +407,10 @@ const saveContent = async (formData) => {
     // 始终包含 is_public 字段（布尔值）
     if (typeof formData.is_public === "boolean") {
       pasteData.is_public = formData.is_public;
+    }
+
+    if (canManageTags.value && Array.isArray(formData.tag_ids)) {
+      pasteData.tag_ids = formData.tag_ids;
     }
 
     // 处理过期时间

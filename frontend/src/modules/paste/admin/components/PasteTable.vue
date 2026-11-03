@@ -78,6 +78,11 @@
               <span :class="darkMode ? 'text-gray-300' : 'text-gray-700'">{{ truncateText(paste.remark, 30) }}</span>
             </div>
 
+            <div v-if="paste.tags?.length" class="flex">
+              <span class="text-gray-500 dark:text-gray-400 w-16 flex-shrink-0">标签:</span>
+              <PasteTagPills :tags="paste.tags" :max="3" size="xs" />
+            </div>
+
             <!-- 过期时间 -->
             <div v-if="paste.expires_at" class="flex">
               <span class="text-gray-500 dark:text-gray-400 w-16 flex-shrink-0">过期:</span>
@@ -124,6 +129,7 @@
 <script setup>
 import { computed, h } from "vue";
 import AdminTable from "@/components/common/AdminTable.vue";
+import PasteTagPills from "./PasteTagPills.vue";
 import { IconCopy, IconDelete, IconEye, IconEyeOff, IconGlobeAlt, IconLink, IconQrCode, IconRename } from "@/components/icons";
 
 // 导入统一的时间处理工具
@@ -279,7 +285,7 @@ const pasteColumns = computed(() => [
     render: (_, paste) => {
       if (!paste) return h("span", "无数据");
       const displayTitle = paste.title || paste.slug || paste.remark;
-      return h("div", { class: "flex items-center space-x-2" }, [
+      return h("div", { class: "flex max-w-[220px] flex-wrap items-center gap-1.5" }, [
         // 标题和加密徽章容器
         h("div", { class: "flex items-center" }, [
           h(
@@ -362,6 +368,7 @@ const pasteColumns = computed(() => [
             ),
           ]
         ),
+        paste.tags?.length ? h(PasteTagPills, { tags: paste.tags, max: 2, size: "xs" }) : null,
       ]);
     },
   },

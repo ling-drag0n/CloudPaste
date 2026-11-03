@@ -8,6 +8,8 @@ DROP TABLE IF EXISTS storage_configs;
 DROP TABLE IF EXISTS api_keys;
 DROP TABLE IF EXISTS admin_tokens;
 DROP TABLE IF EXISTS admins;
+DROP TABLE IF EXISTS paste_tag_assignments;
+DROP TABLE IF EXISTS paste_tags;
 DROP TABLE IF EXISTS pastes;
 DROP TABLE IF EXISTS file_passwords;
 DROP TABLE IF EXISTS paste_passwords;
@@ -50,7 +52,36 @@ CREATE INDEX idx_pastes_created_at ON pastes(created_at DESC);
 CREATE INDEX idx_pastes_created_by ON pastes(created_by);    -- 添加创建者索引
 CREATE INDEX idx_pastes_is_public ON pastes(is_public);
 
+-- 文本标签定义与多对多关联
+CREATE TABLE paste_tags (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+  color TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_by TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
 
+CREATE TABLE paste_tag_assignments (
+  paste_id TEXT NOT NULL,
+  tag_id TEXT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (paste_id, tag_id),
+  FOREIGN KEY (paste_id) REFERENCES pastes(id) ON DELETE CASCADE,
+  FOREIGN KEY (tag_id) REFERENCES paste_tags(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_paste_tags_sort ON paste_tags(sort_order, name);
+CREATE INDEX idx_paste_tag_assignments_tag ON paste_tag_assignments(tag_id, paste_id);
+
+-- 默认文本标签（同名标签存在时不会覆盖）
+INSERT OR IGNORE INTO paste_tags (id, name, color, sort_order, created_by) VALUES
+  ('preset-tag-red', '红色', '#EF4444', 0, NULL),
+  ('preset-tag-yellow', '黄色', '#FACC15', 1, NULL),
+  ('preset-tag-green', '绿色', '#22C55E', 2, NULL),
+  ('preset-tag-important', '重要', '#A855F7', 3, NULL),
+  ('preset-tag-personal', '个人', '#3B82F6', 4, NULL);
 
 -- 创建admins表 - 存储管理员信息
 CREATE TABLE admins (

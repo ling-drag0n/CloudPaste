@@ -37,15 +37,21 @@ export function usePasteService() {
 
   /**
    * 列表查询（offset 模式）
-   * @param {{limit?:number,offset?:number,search?:string}} [params]
+   * @param {{limit?:number,offset?:number,search?:string,tagIds?:string[],untagged?:boolean}} [params]
    * @returns {Promise<PasteListResponse>}
    */
-  const getPastes = async ({ limit = 20, offset = 0, search } = {}) => {
+  const getPastes = async ({ limit = 20, offset = 0, search, tagIds = [], untagged = false } = {}) => {
     ensureCanManage();
 
     const options = {};
     if (search && search.trim()) {
       options.search = search.trim();
+    }
+    if (Array.isArray(tagIds) && tagIds.length > 0) {
+      options.tag_ids = tagIds.join(",");
+    }
+    if (untagged) {
+      options.untagged = 1;
     }
 
     // 当前 admin 与 API Key 文本用户统一走 /api/pastes endpoint
@@ -271,6 +277,58 @@ export function usePasteService() {
     return Array.isArray(resp) ? resp : [];
   };
 
+  const unwrap = (resp, fallbackMessage) => {
+    if (!resp) throw new Error(fallbackMessage);
+    if (typeof resp === "object" && "success" in resp) {
+      if (!resp.success) throw new Error(resp.message || fallbackMessage);
+      return resp.data;
+    }
+    return resp;
+  };
+
+  const getTags = async () => {
+    ensureCanManage();
+    const data = unwrap(await api.paste.getPasteTags(), "获取标签失败") || {};
+    return {
+      tags: Array.isArray(data.tags) ? data.tags : [],
+      totalCount: Number(data.total_count || 0),
+      untaggedCount: Number(data.untagged_count || 0),
+    };
+  };
+
+  const createTag = async (data) => {
+    if (!isAdmin()) throw new Error("仅管理员可以新建标签");
+    return unwrap(await api.paste.createPasteTag(data), "创建标签失败");
+  };
+
+  const updateTag = async (id, data) => {
+    if (!isAdmin()) throw new Error("仅管理员可以修改标签");
+    return unwrap(await api.paste.updatePasteTag(id, data), "修改标签失败");
+  };
+
+  const deleteTag = async (id) => {
+    if (!isAdmin()) throw new Error("仅管理员可以删除标签");
+    unwrap(await api.paste.deletePasteTag(id), "删除标签失败");
+    return true;
+  };
+
+  const reorderTags = async (ids) => {
+    if (!isAdmin()) throw new Error("仅管理员可以调整标签顺序");
+    unwrap(await api.paste.reorderPasteTags(ids), "调整标签顺序失败");
+    return true;
+  };
+
+  const setTags = async (id, tagIds) => {
+    ensureCanManage();
+    const data = unwrap(await api.paste.setPasteTags(id, tagIds), "更新文本标签失败") || {};
+    return Array.isArray(data.tags) ? data.tags : [];
+  };
+
+  const batchUpdateTags = async (ids, tagIds, action) => {
+    ensureCanManage();
+    return unwrap(await api.paste.batchUpdatePasteTags(ids, tagIds, action), "批量更新标签失败");
+  };
+
   return {
     getPastes,
     getPasteById,
@@ -282,5 +340,12 @@ export function usePasteService() {
     createPaste,
     getRawPasteUrl,
     getMarkdownSettings,
+    getTags,
+    createTag,
+    updateTag,
+    deleteTag,
+    reorderTags,
+    setTags,
+    batchUpdateTags,
   };
 }

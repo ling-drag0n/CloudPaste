@@ -39,6 +39,17 @@ export function usePasteManagement(options = {}) {
   const isSearchMode = ref(false);
   const searchLoading = ref(false);
 
+  // ========== 标签管理与筛选 ==========
+  const tags = ref([]);
+  const tagsLoading = ref(false);
+  const tagTotalCount = ref(0);
+  const untaggedCount = ref(0);
+  const selectedTagIds = ref([]);
+  const showUntagged = ref(false);
+  const showTagManager = ref(false);
+  const showBatchTagModal = ref(false);
+  const batchTagMode = ref("add");
+
   /** @type {import("vue").Ref<Paste[]>} */
   const pastes = ref([]);
   /** @type {import("vue").Ref<Paste | null>} */
@@ -60,6 +71,24 @@ export function usePasteManagement(options = {}) {
   const isApiKeyUser = computed(() => authStore.authType === "apikey" && authStore.hasTextManagePermission);
   const isAuthorized = computed(() => isAdmin.value || isApiKeyUser.value);
 
+  const loadTags = async () => {
+    tagsLoading.value = true;
+    try {
+      const result = await pasteService.getTags();
+      tags.value = result.tags;
+      tagTotalCount.value = result.totalCount;
+      untaggedCount.value = result.untaggedCount;
+
+      const validIds = new Set(tags.value.map((tag) => tag.id));
+      selectedTagIds.value = selectedTagIds.value.filter((id) => validIds.has(id));
+    } catch (err) {
+      log.error("加载标签失败:", err);
+      base.showError(err.message || "加载标签失败");
+    } finally {
+      tagsLoading.value = false;
+    }
+  };
+
   /**
    * 加载文本列表
    * @returns {Promise<void>}
@@ -70,6 +99,8 @@ export function usePasteManagement(options = {}) {
         const { items, pagination } = await pasteService.getPastes({
           limit: base.pagination.limit,
           offset: base.pagination.offset,
+          tagIds: selectedTagIds.value,
+          untagged: showUntagged.value,
         });
 
         pastes.value = items;
@@ -114,7 +145,7 @@ export function usePasteManagement(options = {}) {
     return base.withLoading(async () => {
       await pasteService.deleteSinglePaste(pasteId);
       base.showSuccess("删除成功");
-      await loadPastes();
+      await Promise.all([loadPastes(), loadTags()]);
     });
   };
 
@@ -142,7 +173,7 @@ export function usePasteManagement(options = {}) {
       await pasteService.deletePastes(base.selectedItems.value);
       base.showSuccess(`成功删除 ${selectedCount} 条文本`);
       base.clearSelection();
-      await loadPastes();
+      await Promise.all([loadPastes(), loadTags()]);
     });
   };
 
@@ -168,7 +199,7 @@ export function usePasteManagement(options = {}) {
     return base.withLoading(async () => {
       const message = await pasteService.clearExpiredPastes();
       base.showSuccess(message || "已清理过期文本");
-      await loadPastes();
+      await Promise.all([loadPastes(), loadTags()]);
     });
   };
 
@@ -235,6 +266,9 @@ export function usePasteManagement(options = {}) {
           expires_at: updates.expires_at ?? fullPaste.expires_at,
           is_public: updates.is_public ?? fullPaste.is_public,
         };
+        if (Array.isArray(updates.tag_ids)) {
+          payload.tag_ids = updates.tag_ids;
+        }
 
         // 处理特殊字段
         if (Object.prototype.hasOwnProperty.call(updates, "newSlug")) {
@@ -249,6 +283,7 @@ export function usePasteManagement(options = {}) {
         await pasteService.updatePaste(fullPaste.slug, payload);
         base.showSuccess(successMessage);
         await loadPastes();
+        await loadTags();
       } catch (err) {
         log.error("更新文本失败:", err);
         base.showError(err.message || "更新文本失败");
@@ -443,6 +478,8 @@ export function usePasteManagement(options = {}) {
           limit: base.pagination.limit,
           offset: searchOffset,
           search: searchTerm.trim(),
+          tagIds: selectedTagIds.value,
+          untagged: showUntagged.value,
         });
 
         return {
@@ -548,9 +585,109 @@ export function usePasteManagement(options = {}) {
       } finally {
         searchLoading.value = false;
       }
+      await loadTags();
       return;
     }
     await loadPastes();
+    await loadTags();
+  };
+
+  const applyTagFilters = async () => {
+    base.resetPagination();
+    base.clearSelection();
+    if (isSearchMode.value && searchQuery.value) {
+      await handleGlobalSearch(searchQuery.value);
+      return;
+    }
+    await loadPastes();
+  };
+
+  const toggleTagFilter = async (tagId) => {
+    showUntagged.value = false;
+    selectedTagIds.value = selectedTagIds.value.includes(tagId)
+      ? selectedTagIds.value.filter((id) => id !== tagId)
+      : [...selectedTagIds.value, tagId];
+    await applyTagFilters();
+  };
+
+  const toggleUntaggedFilter = async () => {
+    selectedTagIds.value = [];
+    showUntagged.value = !showUntagged.value;
+    await applyTagFilters();
+  };
+
+  const clearTagFilters = async () => {
+    if (selectedTagIds.value.length === 0 && !showUntagged.value) return;
+    selectedTagIds.value = [];
+    showUntagged.value = false;
+    await applyTagFilters();
+  };
+
+  const openBatchTags = (mode) => {
+    if (base.selectedItems.value.length === 0) {
+      base.showError("请先选择要整理的文本");
+      return;
+    }
+    batchTagMode.value = mode === "remove" ? "remove" : "add";
+    showBatchTagModal.value = true;
+  };
+
+  const applyBatchTags = async (tagIds) => {
+    const selectedCount = base.selectedItems.value.length;
+    if (!selectedCount || !Array.isArray(tagIds) || tagIds.length === 0) return;
+    return base.withLoading(async () => {
+      await pasteService.batchUpdateTags(base.selectedItems.value, tagIds, batchTagMode.value);
+      base.showSuccess(`已为 ${selectedCount} 条文本${batchTagMode.value === "add" ? "添加" : "移除"}标签`);
+      showBatchTagModal.value = false;
+      base.clearSelection();
+      await Promise.all([loadPastes(), loadTags()]);
+    });
+  };
+
+  const createTag = async (payload) => {
+    try {
+      await pasteService.createTag(payload);
+      base.showSuccess("标签已创建");
+      await loadTags();
+    } catch (err) {
+      base.showError(err.message || "创建标签失败");
+    }
+  };
+
+  const updateTag = async (id, payload) => {
+    try {
+      await pasteService.updateTag(id, payload);
+      base.showSuccess("标签已更新");
+      await Promise.all([loadTags(), loadPastes()]);
+    } catch (err) {
+      base.showError(err.message || "更新标签失败");
+    }
+  };
+
+  const deleteTag = async (tag) => {
+    const confirmed = await confirmFn({
+      title: "删除标签",
+      message: `确定删除标签“${tag.name}”吗？文本本身不会被删除。`,
+      confirmType: "danger",
+    });
+    if (!confirmed) return;
+
+    try {
+      await pasteService.deleteTag(tag.id);
+      base.showSuccess("标签已删除");
+      await Promise.all([loadTags(), loadPastes()]);
+    } catch (err) {
+      base.showError(err.message || "删除标签失败");
+    }
+  };
+
+  const reorderTags = async (ids) => {
+    try {
+      await pasteService.reorderTags(ids);
+      await loadTags();
+    } catch (err) {
+      base.showError(err.message || "调整标签顺序失败");
+    }
   };
 
   /**
@@ -581,6 +718,8 @@ export function usePasteManagement(options = {}) {
     showPreview.value = false;
     showEdit.value = false;
     showQRCodeModal.value = false;
+    showTagManager.value = false;
+    showBatchTagModal.value = false;
     previewPaste.value = null;
     editingPaste.value = null;
     qrCodeDataURL.value = "";
@@ -595,6 +734,17 @@ export function usePasteManagement(options = {}) {
     searchQuery,
     isSearchMode,
     searchLoading,
+
+    // 标签状态
+    tags,
+    tagsLoading,
+    tagTotalCount,
+    untaggedCount,
+    selectedTagIds,
+    showUntagged,
+    showTagManager,
+    showBatchTagModal,
+    batchTagMode,
 
     // 文本管理状态
     pastes,
@@ -615,6 +765,7 @@ export function usePasteManagement(options = {}) {
 
     // 操作
     loadPastes,
+    loadTags,
     refreshPastes,
     searchPastes,
     handleOffsetChange,
@@ -637,6 +788,15 @@ export function usePasteManagement(options = {}) {
     showQRCode,
     toggleSelectAll,
     toggleVisibility,
+    toggleTagFilter,
+    toggleUntaggedFilter,
+    clearTagFilters,
+    openBatchTags,
+    applyBatchTags,
+    createTag,
+    updateTag,
+    deleteTag,
+    reorderTags,
     closeAllModals,
   };
 }

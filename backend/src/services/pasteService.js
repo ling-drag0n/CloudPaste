@@ -3,6 +3,7 @@ import { generateRandomString, createErrorResponse, validateSlugFormat } from ".
 import { hashPassword, verifyPassword } from "../utils/crypto.js";
 import { AppError, ValidationError, ConflictError, NotFoundError, AuthenticationError } from "../http/errors.js";
 import { ensureRepositoryFactory } from "../utils/repositories.js";
+import { hydratePastesWithTags, validatePasteTagIds } from "./pasteTagService.js";
 
 const resolveRepositoryFactory = ensureRepositoryFactory;
 
@@ -329,7 +330,7 @@ export async function verifyPastePassword(db, slug, password, incrementViews = t
  * @param {number} offset - 偏移量（优先使用）
  * @returns {Promise<Object>} 分页结果
  */
-export async function getAllPastes(db, page = 1, limit = 10, created_by = null, search = null, offset = null, repositoryFactory = null) {
+export async function getAllPastes(db, page = 1, limit = 10, created_by = null, search = null, offset = null, repositoryFactory = null, filters = {}) {
   // 使用 Repository
   const factory = resolveRepositoryFactory(db, repositoryFactory);
   const pasteRepository = factory.getPasteRepository();
@@ -342,6 +343,8 @@ export async function getAllPastes(db, page = 1, limit = 10, created_by = null, 
     offset,
     created_by,
     search,
+    tagIds: filters.tagIds,
+    untagged: filters.untagged,
   });
 
   // 处理查询结果，为API密钥创建者添加密钥名称
@@ -376,6 +379,8 @@ export async function getAllPastes(db, page = 1, limit = 10, created_by = null, 
     });
   }
 
+  results = await hydratePastesWithTags(db, results, factory);
+
   return {
     results,
     pagination: pasteData.pagination,
@@ -391,7 +396,7 @@ export async function getAllPastes(db, page = 1, limit = 10, created_by = null, 
  * @param {string} search - 搜索关键词
  * @returns {Promise<Object>} 分页结果
  */
-export async function getUserPastes(db, apiKeyId, limit = 30, offset = 0, search = null, repositoryFactory = null) {
+export async function getUserPastes(db, apiKeyId, limit = 30, offset = 0, search = null, repositoryFactory = null, filters = {}) {
   // 使用 Repository
   const factory = resolveRepositoryFactory(db, repositoryFactory);
   const pasteRepository = factory.getPasteRepository();
@@ -403,6 +408,8 @@ export async function getUserPastes(db, apiKeyId, limit = 30, offset = 0, search
     limit,
     offset,
     search,
+    tagIds: filters.tagIds,
+    untagged: filters.untagged,
   });
 
   // 如果有created_by字段并且以apikey:开头，查询密钥名称
@@ -437,6 +444,8 @@ export async function getUserPastes(db, apiKeyId, limit = 30, offset = 0, search
       return paste;
     });
   }
+
+  results = await hydratePastesWithTags(db, results, factory);
 
   return {
     results,
@@ -479,7 +488,8 @@ export async function getPasteById(db, id, repositoryFactory = null) {
     }
   }
 
-  return result;
+  const [hydrated] = await hydratePastesWithTags(db, [result], factory);
+  return hydrated;
 }
 
 /**
@@ -570,6 +580,8 @@ export async function updatePaste(db, slug, updateData, created_by = null, repos
   // 使用 Repository
   const factory = resolveRepositoryFactory(db, repositoryFactory);
   const pasteRepository = factory.getPasteRepository();
+  const hasTagPayload = Object.prototype.hasOwnProperty.call(updateData || {}, "tag_ids");
+  const tagIds = hasTagPayload ? await validatePasteTagIds(db, updateData.tag_ids, factory) : null;
 
   // 检查分享是否存在
   const paste = await pasteRepository.findBySlugForUpdate(slug, created_by);
@@ -661,9 +673,19 @@ export async function updatePaste(db, slug, updateData, created_by = null, repos
     await pasteRepository.deletePasswordRecord(paste.id);
   }
 
+  // 标签在文本和密码更新完成后单独保存
+  if (hasTagPayload) {
+    await factory.getPasteTagRepository().replacePasteTags(paste.id, tagIds);
+  }
+
   // 返回更新结果
-  return {
+  const result = {
     id: paste.id,
     slug: newSlug, // 返回更新后的slug（可能已更改）
   };
+  if (hasTagPayload) {
+    const tagMap = await factory.getPasteTagRepository().getTagsForPasteIds([paste.id]);
+    result.tags = tagMap.get(paste.id) || [];
+  }
+  return result;
 }

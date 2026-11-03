@@ -93,6 +93,8 @@ out
 # vuepress build output
 .vuepress/dist
 
+dist/
+
 # Serverless directories
 .serverless/
 
@@ -108,3 +110,6 @@ out
 # Stores VSCode versions used for testing VSCode extensions
 .vscode-test
 .spec-workflow
+
+# Mac system files
+.DS_Store

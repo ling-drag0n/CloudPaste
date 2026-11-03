@@ -2,6 +2,7 @@
 import { computed } from "vue";
 import { useCreatorBadge } from "@/composables/admin-management/useCreatorBadge.js";
 import { IconCopy, IconDelete, IconEye, IconEyeOff, IconGlobeAlt, IconLink, IconLockClosed, IconQrCode, IconRefresh, IconRename } from "@/components/icons";
+import PasteTagPills from "./PasteTagPills.vue";
 
 // 移动端的卡片列表视图
 // 创建者徽章统一逻辑
@@ -213,6 +214,10 @@ const isExpired = (paste) => {
 
       <!-- 卡片内容 - 网格布局展示详细信息 -->
       <div class="grid grid-cols-2 gap-2 text-sm mt-3">
+        <div v-if="paste.tags?.length" class="col-span-2">
+          <div class="text-gray-500 dark:text-gray-400 text-xs mb-1">标签</div>
+          <PasteTagPills :tags="paste.tags" :max="4" />
+        </div>
         <!-- 备注信息 -->
         <div>
           <div class="text-gray-500 dark:text-gray-400 text-xs mb-1">备注</div>

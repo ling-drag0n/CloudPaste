@@ -10,6 +10,7 @@ export { StorageConfigRepository } from "./StorageConfigRepository.js";
 export { AdminRepository } from "./AdminRepository.js";
 export { ApiKeyRepository } from "./ApiKeyRepository.js";
 export { PasteRepository } from "./PasteRepository.js";
+export { PasteTagRepository } from "./PasteTagRepository.js";
 export { SystemRepository } from "./SystemRepository.js";
 export { PrincipalStorageAclRepository } from "./PrincipalStorageAclRepository.js";
 export { FsMetaRepository } from "./FsMetaRepository.js";
@@ -25,6 +26,7 @@ import { StorageConfigRepository } from "./StorageConfigRepository.js";
 import { AdminRepository } from "./AdminRepository.js";
 import { ApiKeyRepository } from "./ApiKeyRepository.js";
 import { PasteRepository } from "./PasteRepository.js";
+import { PasteTagRepository } from "./PasteTagRepository.js";
 import { SystemRepository } from "./SystemRepository.js";
 import { PrincipalStorageAclRepository } from "./PrincipalStorageAclRepository.js";
 import { FsMetaRepository } from "./FsMetaRepository.js";
@@ -119,6 +121,17 @@ export class RepositoryFactory {
   }
 
   /**
+   * 获取PasteTagRepository实例
+   * @returns {PasteTagRepository}
+   */
+  getPasteTagRepository() {
+    if (!this._repositories.has("pasteTag")) {
+      this._repositories.set("pasteTag", new PasteTagRepository(this.db, this.dialect));
+    }
+    return this._repositories.get("pasteTag");
+  }
+
+  /**
    * 获取SystemRepository实例
    * @returns {SystemRepository} SystemRepository实例
    */
@@ -192,6 +205,7 @@ export class RepositoryFactory {
       admin: this.getAdminRepository(),
       apiKey: this.getApiKeyRepository(),
       paste: this.getPasteRepository(),
+      pasteTag: this.getPasteTagRepository(),
       system: this.getSystemRepository(),
       principalStorageAcl: this.getPrincipalStorageAclRepository(),
       fsMeta: this.getFsMetaRepository(),

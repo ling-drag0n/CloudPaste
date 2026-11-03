@@ -10,6 +10,7 @@ import { getRemainingViews as getRemainingViewsUtil } from "@/utils/fileUtils.js
 import { useCreatorBadge } from "@/composables/admin-management/useCreatorBadge.js";
 import { useGlobalMessage } from "@/composables/core/useGlobalMessage.js";
 import { IconArrowUp, IconCalendar, IconCopy, IconDelete, IconError, IconEye, IconEyeOff, IconGlobeAlt, IconLink, IconLockClosed, IconMenu, IconQrCode, IconRename, IconUser } from "@/components/icons";
+import PasteTagPills from "./PasteTagPills.vue";
 
 const { getCreatorText } = useCreatorBadge();
 const { t } = useI18n();
@@ -450,6 +451,8 @@ onMounted(() => {
       >
         {{ paste.title || paste.slug }}
       </h3>
+
+      <PasteTagPills v-if="paste.tags?.length" :tags="paste.tags" :max="4" class="mb-3" />
 
       <!-- 内容区域 -->
       <div class="text-sm text-gray-700 dark:text-gray-300 mb-3 line-clamp-8 sm:line-clamp-10 whitespace-pre-wrap break-words leading-relaxed">

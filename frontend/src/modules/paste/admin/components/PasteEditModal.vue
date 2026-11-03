@@ -2,6 +2,7 @@
 import { reactive, watch } from "vue";
 // 编辑文本属性的弹窗
 import { IconClose } from "@/components/icons";
+import PasteTagPicker from "./PasteTagPicker.vue";
 
 // 组件接收的属性定义
 const props = defineProps({
@@ -16,6 +17,10 @@ const props = defineProps({
   paste: {
     type: Object,
     default: null,
+  },
+  availableTags: {
+    type: Array,
+    default: () => [],
   },
 });
 
@@ -36,6 +41,7 @@ const editForm = reactive({
   max_views: 0, // 最大查看次数，0表示无限制
   slug: "", // 链接后缀，为空则系统自动生成
   is_public: true, // 是否公开访问
+  tag_ids: [], // 标签 ID 列表
 });
 
 /**
@@ -80,6 +86,7 @@ watch(
 
     // 设置公开性
     editForm.is_public = Boolean(newPaste.is_public);
+    editForm.tag_ids = Array.isArray(newPaste.tags) ? newPaste.tags.map((tag) => tag.id) : [];
   },
   { immediate: true }
 );
@@ -142,6 +149,7 @@ const saveEdit = () => {
     remark: editForm.remark || null,
     max_views: editForm.max_views === 0 ? null : parseInt(editForm.max_views),
     is_public: editForm.is_public,
+    tag_ids: [...editForm.tag_ids],
   };
 
   // 只有当用户修改了slug时，才包含newSlug参数
@@ -183,7 +191,7 @@ const saveEdit = () => {
 
       <!-- 弹窗主体内容 -->
       <div
-        class="inline-block align-middle sm:align-middle bg-white dark:bg-gray-800 rounded-lg text-left overflow-hidden shadow-xl transform transition-all w-full max-w-sm sm:max-w-lg max-h-[95vh] sm:max-h-[85vh] my-1 sm:my-8"
+        class="inline-block align-middle sm:align-middle bg-white dark:bg-gray-800 rounded-lg text-left overflow-hidden shadow-xl transform transition-all w-full max-w-sm sm:max-w-lg max-h-[95vh] sm:max-h-[90vh] my-1 sm:mt-4"
         :class="darkMode ? 'dark' : ''"
       >
         <!-- 弹窗头部带关闭按钮 -->
@@ -241,6 +249,10 @@ const saveEdit = () => {
                 :class="darkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300 text-gray-900'"
                 placeholder="添加备注信息..."
               ></textarea>
+            </div>
+            <div class="mb-4">
+              <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">标签</label>
+              <PasteTagPicker v-model="editForm.tag_ids" :tags="availableTags" />
             </div>
             <!-- 可打开次数输入区域 -->
             <div class="mb-4">

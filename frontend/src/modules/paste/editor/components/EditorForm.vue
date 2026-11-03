@@ -79,6 +79,22 @@
         />
       </div>
 
+      <div v-if="showTags" class="form-group">
+        <label class="form-label" :class="darkMode ? 'text-gray-300' : 'text-gray-700'">{{ $t("markdown.form.tags") }}</label>
+        <p v-if="tagsLoading" class="form-input text-sm text-gray-500 dark:text-gray-400">{{ $t("markdown.form.tagsLoading") }}</p>
+        <p v-else-if="tagsError" class="form-input border-red-300 bg-red-50 text-sm text-red-600 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300">
+          {{ tagsError }}
+        </p>
+        <PasteTagPicker
+          v-else
+          v-model="formData.tag_ids"
+          :tags="availableTags"
+          :empty-text="$t('markdown.form.tagsEmpty')"
+          :placeholder="$t('markdown.form.tagsPlaceholder')"
+          variant="select"
+        />
+      </div>
+
       <div class="form-group">
         <label class="form-label" :class="darkMode ? 'text-gray-300' : 'text-gray-700'">{{ $t("markdown.form.visibility") }}</label>
         <div class="flex items-center mt-2">
@@ -122,6 +138,7 @@
 <script setup>
 import { ref, reactive } from "vue";
 import { useI18n } from "vue-i18n";
+import PasteTagPicker from "@/modules/paste/admin/components/PasteTagPicker.vue";
 
 const { t } = useI18n();
 
@@ -143,6 +160,22 @@ const props = defineProps({
     type: String,
     default: "",
   },
+  showTags: {
+    type: Boolean,
+    default: false,
+  },
+  availableTags: {
+    type: Array,
+    default: () => [],
+  },
+  tagsLoading: {
+    type: Boolean,
+    default: false,
+  },
+  tagsError: {
+    type: String,
+    default: "",
+  },
 });
 
 // Emits
@@ -157,6 +190,7 @@ const formData = reactive({
   expiry_time: "0",
   max_views: 0,
   is_public: true,
+  tag_ids: [],
 });
 
 // 验证错误
@@ -245,6 +279,7 @@ const resetForm = () => {
   formData.expiry_time = "0";
   formData.max_views = 0;
   formData.is_public = true;
+  formData.tag_ids = [];
   slugError.value = "";
 };
 
@@ -271,9 +306,12 @@ defineExpose({
 .form-input {
   width: 100%;
   max-width: 100%;
+  min-height: 2.375rem;
   padding: 0.5rem;
   border-width: 1px;
   border-radius: 0.375rem;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
 }
 
 .form-label {

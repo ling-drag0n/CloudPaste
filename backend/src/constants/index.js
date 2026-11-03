@@ -7,6 +7,8 @@ export const DbTables = {
   ADMINS: "admins", // 管理员表
   ADMIN_TOKENS: "admin_tokens", // 管理员令牌表
   PASTES: "pastes", // 文本表
+  PASTE_TAGS: "paste_tags", // 文本标签定义表
+  PASTE_TAG_ASSIGNMENTS: "paste_tag_assignments", // 文本与标签关联表
   API_KEYS: "api_keys", // API密钥表
   STORAGE_CONFIGS: "storage_configs", // 通用"存储配置表"
   PRINCIPAL_STORAGE_ACL: "principal_storage_acl", // 主体 -> 存储配置 ACL 表

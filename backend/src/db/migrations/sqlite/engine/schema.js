@@ -64,6 +64,44 @@ export async function createPasteTables(db) {
   await db.prepare(`CREATE INDEX IF NOT EXISTS idx_pastes_is_public ON ${DbTables.PASTES}(is_public)`).run();
 }
 
+export async function createPasteTagTables(db) {
+  console.log("创建文本标签相关表...");
+
+  await db
+    .prepare(
+      `
+      CREATE TABLE IF NOT EXISTS ${DbTables.PASTE_TAGS} (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+        color TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_by TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `,
+    )
+    .run();
+
+  await db
+    .prepare(
+      `
+      CREATE TABLE IF NOT EXISTS ${DbTables.PASTE_TAG_ASSIGNMENTS} (
+        paste_id TEXT NOT NULL,
+        tag_id TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (paste_id, tag_id),
+        FOREIGN KEY (paste_id) REFERENCES ${DbTables.PASTES}(id) ON DELETE CASCADE,
+        FOREIGN KEY (tag_id) REFERENCES ${DbTables.PASTE_TAGS}(id) ON DELETE CASCADE
+      )
+    `,
+    )
+    .run();
+
+  await db.prepare(`CREATE INDEX IF NOT EXISTS idx_paste_tags_sort ON ${DbTables.PASTE_TAGS}(sort_order, name)`).run();
+  await db.prepare(`CREATE INDEX IF NOT EXISTS idx_paste_tag_assignments_tag ON ${DbTables.PASTE_TAG_ASSIGNMENTS}(tag_id, paste_id)`).run();
+}
+
 export async function createAdminTables(db) {
   console.log("创建管理员相关表...");
 

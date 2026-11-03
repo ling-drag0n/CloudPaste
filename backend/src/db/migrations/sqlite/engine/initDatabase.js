@@ -5,6 +5,7 @@ import {
   createFsSearchIndexTables,
   createIndexes,
   createPasteTables,
+  createPasteTagTables,
   createMigrationTables,
   createScheduledJobRunsTables,
   createScheduledJobsTables,
@@ -24,6 +25,7 @@ import {
   addSiteSettings,
   createDefaultAdmin,
   createDefaultGuestApiKey,
+  initializeDefaultPasteTags,
   initDefaultSettings,
 } from "./seed.js";
 
@@ -35,6 +37,7 @@ export async function initDatabase(db) {
   console.log("开始初始化数据库表结构...");
 
   await createPasteTables(db);
+  await createPasteTagTables(db);
   await createAdminTables(db);
   await createStorageTables(db);
   await createFileTables(db);
@@ -61,6 +64,7 @@ export async function initDatabase(db) {
 
   await createDefaultAdmin(db);
   await createDefaultGuestApiKey(db);
+  await initializeDefaultPasteTags(db);
 
   console.log("数据库初始化完成");
 }

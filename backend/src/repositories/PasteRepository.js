@@ -447,7 +447,7 @@ export class PasteRepository extends BaseRepository {
    * @returns {Promise<Object>} 包含结果和分页信息的对象
    */
   async findAllForAdmin(options = {}) {
-    const { page = 1, limit = 10, offset = null, created_by = null, search = null } = options;
+    const { page = 1, limit = 10, offset = null, created_by = null, search = null, tagIds = [], untagged = false } = options;
 
     // 支持两种分页模式：page模式和offset模式
     const actualOffset = offset !== null ? offset : (page - 1) * limit;
@@ -473,6 +473,20 @@ export class PasteRepository extends BaseRepository {
       conditions.push("created_by = ?");
       queryParams.push(created_by);
       countParams.push(created_by);
+    }
+
+    if (untagged) {
+      conditions.push(`NOT EXISTS (
+        SELECT 1 FROM ${DbTables.PASTE_TAG_ASSIGNMENTS} pta WHERE pta.paste_id = ${DbTables.PASTES}.id
+      )`);
+    } else if (Array.isArray(tagIds) && tagIds.length > 0) {
+      const tagPlaceholders = tagIds.map(() => "?").join(",");
+      conditions.push(`EXISTS (
+        SELECT 1 FROM ${DbTables.PASTE_TAG_ASSIGNMENTS} pta
+        WHERE pta.paste_id = ${DbTables.PASTES}.id AND pta.tag_id IN (${tagPlaceholders})
+      )`);
+      queryParams.push(...tagIds);
+      countParams.push(...tagIds);
     }
 
     // 构建WHERE子句
@@ -532,7 +546,7 @@ export class PasteRepository extends BaseRepository {
    * @returns {Promise<Object>} 包含结果和分页信息的对象
    */
   async findByCreatorWithPagination(created_by, options = {}) {
-    const { limit = 30, offset = 0, search = null } = options;
+    const { limit = 30, offset = 0, search = null, tagIds = [], untagged = false } = options;
 
     // 构建查询条件
     let whereClause = "WHERE created_by = ?";
@@ -543,6 +557,19 @@ export class PasteRepository extends BaseRepository {
       const searchPattern = `%${search.trim()}%`;
       whereClause += " AND (slug LIKE ? OR remark LIKE ? OR content LIKE ?)";
       params.push(searchPattern, searchPattern, searchPattern);
+    }
+
+    if (untagged) {
+      whereClause += ` AND NOT EXISTS (
+        SELECT 1 FROM ${DbTables.PASTE_TAG_ASSIGNMENTS} pta WHERE pta.paste_id = ${DbTables.PASTES}.id
+      )`;
+    } else if (Array.isArray(tagIds) && tagIds.length > 0) {
+      const tagPlaceholders = tagIds.map(() => "?").join(",");
+      whereClause += ` AND EXISTS (
+        SELECT 1 FROM ${DbTables.PASTE_TAG_ASSIGNMENTS} pta
+        WHERE pta.paste_id = ${DbTables.PASTES}.id AND pta.tag_id IN (${tagPlaceholders})
+      )`;
+      params.push(...tagIds);
     }
 
     // 查询数据

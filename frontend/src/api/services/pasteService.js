@@ -58,6 +58,7 @@ export function getRawPasteUrl(slug, password = null) {
  * @param {string} [pasteData.expires_at] - 过期时间，ISO格式（可选）
  * @param {string} [pasteData.password] - 访问密码（可选）
  * @param {number} [pasteData.max_views] - 最大查看次数（可选）
+ * @param {string[]} [pasteData.tag_ids] - 标签 ID（需要文本管理权限）
  * @returns {Promise<Object>} 创建结果
  */
 export function createPaste(pasteData) {
@@ -117,6 +118,7 @@ export function getPasteById(id) {
  * @param {string} [data.expires_at] - 新的过期时间
  * @param {number} [data.max_views] - 新的最大查看次数
  * @param {string} [data.newSlug] - 新的链接后缀，为空则自动生成
+ * @param {string[]} [data.tag_ids] - 标签 ID；不传则保持不变，空数组则清空
  * @returns {Promise<ApiResponse>} - API响应
  */
 export function updatePaste(slug, data) {
@@ -138,4 +140,32 @@ export function batchDeletePastes(ids) {
  */
 export function clearExpiredPastes() {
   return post("/pastes/clear-expired", { clearExpired: true });
+}
+
+export function getPasteTags() {
+  return get("/paste-tags");
+}
+
+export function createPasteTag(data) {
+  return post("/paste-tags", data);
+}
+
+export function updatePasteTag(id, data) {
+  return put(`/paste-tags/${id}`, data);
+}
+
+export function deletePasteTag(id) {
+  return del(`/paste-tags/${id}`);
+}
+
+export function reorderPasteTags(ids) {
+  return put("/paste-tags/reorder", { ids });
+}
+
+export function setPasteTags(id, tagIds) {
+  return put(`/pastes/${id}/tags`, { tag_ids: tagIds });
+}
+
+export function batchUpdatePasteTags(ids, tagIds, action) {
+  return post("/pastes/batch-tags", { ids, tag_ids: tagIds, action });
 }
